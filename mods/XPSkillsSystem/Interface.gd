@@ -4,11 +4,11 @@ var skillsButton: Button
 var skillsUI: Control
 var skillsXPLabel: Label
 var skillRows: Array = []
-var skillNames = ["Vitality", "Endurance", "Pack Mule", "Hunger Resist", "Thirst Resist", "Iron Will", "Regeneration", "Cold Resistance", "Stealth", "Recoil Control", "Athleticism"]
-var skillKeys = ["xpHealth", "xpStamina", "xpCarry", "xpHunger", "xpThirst", "xpMental", "xpRegen", "xpColdRes", "xpStealth", "xpRecoil", "xpSpeed"]
-var skillMax = [10, 10, 10, 10, 10, 10, 5, 10, 10, 10, 5]
-var skillCostBase = [25, 25, 20, 20, 20, 20, 50, 20, 25, 25, 30]
-var skillDescs = ["+5 Max HP", "-10% Stamina Drain", "+2kg Carry Weight", "-8% Hunger Drain", "-8% Thirst Drain", "-8% Mental Drain", "+0.2 HP/sec Regen", "-8% Cold Drain", "-5% AI Hearing Range", "-5% Weapon Recoil", "+4% Movement Speed"]
+var skillNames = ["Vitality", "Endurance", "Pack Mule", "Hunger Resist", "Thirst Resist", "Iron Will", "Regeneration", "Cold Resistance", "Stealth", "Recoil Control", "Athleticism", "Scavenger"]
+var skillKeys = ["xpHealth", "xpStamina", "xpCarry", "xpHunger", "xpThirst", "xpMental", "xpRegen", "xpColdRes", "xpStealth", "xpRecoil", "xpSpeed", "xpScavenger"]
+var skillMax = [10, 10, 10, 10, 10, 10, 5, 10, 10, 10, 5, 5]
+var skillCostBase = [25, 25, 20, 20, 20, 20, 50, 20, 25, 25, 30, 30]
+var skillDescs = ["+5 Max HP", "-10% Stamina Drain", "+2kg Carry Weight", "-8% Hunger Drain", "-8% Thirst Drain", "-8% Mental Drain", "+0.2 HP/sec Regen", "-8% Cold Drain", "-5% AI Hearing Range", "-5% Weapon Recoil", "+4% Movement Speed", "+5% Extra Loot Chance"]
 var skillsBuilt = false
 var skillDescLabels: Array = []
 var _xp_refresh_timer: float = 0.0
@@ -80,7 +80,7 @@ func UpdateStats(updateLabels: bool):
     currentInventoryCapacity += baseCarryWeight
     var xp_mod = Engine.get_meta("XPMain", null)
     if xp_mod:
-        currentInventoryCapacity += xp_mod.xpCarry * xp_mod.cfg_carry_per_level
+        currentInventoryCapacity += xp_mod.get_level(2) * xp_mod.cfg_carry_per_level
     insulationMultiplier = 1.0 - (currentEquipmentInsulation / 100.0)
     character.insulation = insulationMultiplier
 
@@ -205,7 +205,12 @@ func BuildSkillsUI():
     vbox.add_child(sep)
 
     skillRows.clear()
+    skillDescLabels.clear()
     for i in skillNames.size():
+        if xp_mod and not xp_mod.is_skill_enabled(i):
+            skillRows.append(null)
+            skillDescLabels.append(null)
+            continue
         var rowPanel = PanelContainer.new()
         rowPanel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         var stylebox = StyleBoxFlat.new()
@@ -258,18 +263,24 @@ func BuildSkillsUI():
 
 func RefreshSkillDescs():
     var xp_mod = Engine.get_meta("XPMain", null)
-    if !xp_mod or skillDescLabels.size() < 11: return
-    skillDescLabels[0].text = "+" + str(xp_mod.cfg_hp_per_level) + " Max HP"
-    skillDescLabels[1].text = "-" + str(int(xp_mod.cfg_stamina_reduce * 100)) + "% Stamina Drain"
-    skillDescLabels[2].text = "+" + str(xp_mod.cfg_carry_per_level) + "kg Carry Weight"
-    skillDescLabels[3].text = "-" + str(int(xp_mod.cfg_hunger_reduce * 100)) + "% Hunger Drain"
-    skillDescLabels[4].text = "-" + str(int(xp_mod.cfg_thirst_reduce * 100)) + "% Thirst Drain"
-    skillDescLabels[5].text = "-" + str(int(xp_mod.cfg_mental_reduce * 100)) + "% Mental Drain"
-    skillDescLabels[6].text = "+" + str(xp_mod.cfg_regen_per_level) + " HP/sec Regen"
-    skillDescLabels[7].text = "-" + str(int(xp_mod.cfg_coldres_reduce * 100)) + "% Cold Drain"
-    skillDescLabels[8].text = "-" + str(int(xp_mod.cfg_stealth_reduce * 100)) + "% AI Hearing Range"
-    skillDescLabels[9].text = "-" + str(int(xp_mod.cfg_recoil_reduce * 100)) + "% Weapon Recoil"
-    skillDescLabels[10].text = "+" + str(int(xp_mod.cfg_speed_bonus * 100)) + "% Movement Speed"
+    if !xp_mod or skillDescLabels.size() < 12: return
+    var descs = [
+        "+" + str(xp_mod.cfg_hp_per_level) + " Max HP",
+        "-" + str(int(xp_mod.cfg_stamina_reduce * 100)) + "% Stamina Drain",
+        "+" + str(xp_mod.cfg_carry_per_level) + "kg Carry Weight",
+        "-" + str(int(xp_mod.cfg_hunger_reduce * 100)) + "% Hunger Drain",
+        "-" + str(int(xp_mod.cfg_thirst_reduce * 100)) + "% Thirst Drain",
+        "-" + str(int(xp_mod.cfg_mental_reduce * 100)) + "% Mental Drain",
+        "+" + str(xp_mod.cfg_regen_per_level) + " HP/sec Regen",
+        "-" + str(int(xp_mod.cfg_coldres_reduce * 100)) + "% Cold Drain",
+        "-" + str(int(xp_mod.cfg_stealth_reduce * 100)) + "% AI Hearing Range",
+        "-" + str(int(xp_mod.cfg_recoil_reduce * 100)) + "% Weapon Recoil",
+        "+" + str(int(xp_mod.cfg_speed_bonus * 100)) + "% Movement Speed",
+        "+" + str(int(xp_mod.cfg_scavenger_chance * 100)) + "% Extra Loot Chance"
+    ]
+    for i in descs.size():
+        if skillDescLabels[i] != null:
+            skillDescLabels[i].text = descs[i]
 
 
 func _on_skills_pressed() -> void:
@@ -320,6 +331,7 @@ func GetSkillLevel(index: int) -> int:
         8: return xp_mod.xpStealth
         9: return xp_mod.xpRecoil
         10: return xp_mod.xpSpeed
+        11: return xp_mod.xpScavenger
     return 0
 
 func SetSkillLevel(index: int, value: int):
@@ -337,6 +349,7 @@ func SetSkillLevel(index: int, value: int):
         8: xp_mod.xpStealth = value
         9: xp_mod.xpRecoil = value
         10: xp_mod.xpSpeed = value
+        11: xp_mod.xpScavenger = value
 
 func UpdateSkillsUI():
     if !skillsXPLabel: return
@@ -344,6 +357,8 @@ func UpdateSkillsUI():
     if !xp_mod: return
     skillsXPLabel.text = "XP: " + str(xp_mod.xp) + "  (Total: " + str(xp_mod.xpTotal) + ")"
     for row in skillRows:
+        if row == null:
+            continue
         var i = row.index
         var level = GetSkillLevel(i)
         row.level.text = str(level) + "/" + str(skillMax[i])

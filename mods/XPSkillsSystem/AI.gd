@@ -13,8 +13,8 @@ func Hearing():
     var runRange = 20.0
     var walkRange = 5.0
     var xp_mod = Engine.get_meta("XPMain", null)
-    if xp_mod and xp_mod.xpStealth > 0:
-        var mult = 1.0 - (xp_mod.xpStealth * xp_mod.cfg_stealth_reduce)
+    if xp_mod and xp_mod.get_level(8) > 0:
+        var mult = 1.0 - (xp_mod.get_level(8) * xp_mod.cfg_stealth_reduce)
         runRange *= mult
         walkRange *= mult
     if (playerDistance3D < runRange && gameData.isRunning) || (playerDistance3D < walkRange && gameData.isWalking):

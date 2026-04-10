@@ -5,8 +5,8 @@ var _base_walk_speed = 2.5
 
 func _physics_process(delta):
     var xp_mod = Engine.get_meta("XPMain", null)
-    if xp_mod and xp_mod.xpSpeed > 0:
-        var bonus = 1.0 + (xp_mod.xpSpeed * xp_mod.cfg_speed_bonus)
+    if xp_mod and xp_mod.get_level(10) > 0:
+        var bonus = 1.0 + (xp_mod.get_level(10) * xp_mod.cfg_speed_bonus)
         sprintSpeed = _base_sprint_speed * bonus
         walkSpeed = _base_walk_speed * bonus
     else:
