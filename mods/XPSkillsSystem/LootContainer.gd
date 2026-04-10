@@ -4,7 +4,8 @@ var xp_awarded = false
 
 func Interact():
     if !locked:
-        var UIManager = get_tree().current_scene.get_node("/root/Map/Core/UI")
+        var UIManager = get_tree().current_scene.get_node_or_null("/root/Map/Core/UI")
+        if !UIManager: return
         UIManager.OpenContainer(self)
         ContainerAudio()
         if !xp_awarded:

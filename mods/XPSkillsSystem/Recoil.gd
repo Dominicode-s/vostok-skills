@@ -1,6 +1,7 @@
 extends "res://Scripts/Recoil.gd"
 
 func ApplyRecoil():
+    super()
     var recoilMult = 1.0
     var xp_mod = Engine.get_meta("XPMain", null)
     if xp_mod and xp_mod.xpRecoil > 0:
