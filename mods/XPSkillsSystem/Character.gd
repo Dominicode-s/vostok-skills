@@ -31,10 +31,10 @@ func Health(delta):
         gameData.health -= delta
 
     # XP: Passive health regen
-    if xp_mod and xp_mod.xpRegen > 0 and !gameData.isDead and gameData.health > 0:
-        var maxHP = 100.0 + xp_mod.xpHealth * xp_mod.cfg_hp_per_level
+    if xp_mod and xp_mod.get_level(6) > 0 and !gameData.isDead and gameData.health > 0:
+        var maxHP = 100.0 + xp_mod.get_level(0) * xp_mod.cfg_hp_per_level
         if gameData.health < maxHP:
-            gameData.health += delta * xp_mod.xpRegen * xp_mod.cfg_regen_per_level
+            gameData.health += delta * xp_mod.get_level(6) * xp_mod.cfg_regen_per_level
 
     if gameData.health <= 0 && !gameData.isDead && !gameData.decor:
         Death()
@@ -42,7 +42,7 @@ func Health(delta):
 func Energy(delta):
     if !gameData.starvation:
         var hungerMult = 1.0
-        if xp_mod: hungerMult = 1.0 - (xp_mod.xpHunger * xp_mod.cfg_hunger_reduce)
+        if xp_mod: hungerMult = 1.0 - (xp_mod.get_level(3) * xp_mod.cfg_hunger_reduce)
         gameData.energy -= (delta / 30.0) * hungerMult
 
     if gameData.energy <= 0 && !gameData.starvation:
@@ -53,7 +53,7 @@ func Energy(delta):
 func Hydration(delta):
     if !gameData.dehydration:
         var thirstMult = 1.0
-        if xp_mod: thirstMult = 1.0 - (xp_mod.xpThirst * xp_mod.cfg_thirst_reduce)
+        if xp_mod: thirstMult = 1.0 - (xp_mod.get_level(4) * xp_mod.cfg_thirst_reduce)
         gameData.hydration -= (delta / 20.0) * thirstMult
 
     if gameData.hydration <= 0 && !gameData.dehydration:
@@ -67,7 +67,7 @@ func Mental(delta):
 
     elif !gameData.insanity:
         var mentalMult = 1.0
-        if xp_mod: mentalMult = 1.0 - (xp_mod.xpMental * xp_mod.cfg_mental_reduce)
+        if xp_mod: mentalMult = 1.0 - (xp_mod.get_level(5) * xp_mod.cfg_mental_reduce)
         if (gameData.overweight
         || gameData.dehydration
         || gameData.starvation
@@ -89,7 +89,7 @@ func Mental(delta):
 
 func Stamina(delta):
     var staminaMult = 1.0
-    if xp_mod: staminaMult = 1.0 - (xp_mod.xpStamina * xp_mod.cfg_stamina_reduce)
+    if xp_mod: staminaMult = 1.0 - (xp_mod.get_level(1) * xp_mod.cfg_stamina_reduce)
 
     if gameData.bodyStamina > 0 && (gameData.isRunning || gameData.overweight || (gameData.isSwimming && gameData.isMoving)):
         if gameData.overweight || gameData.starvation || gameData.dehydration:
@@ -117,7 +117,7 @@ func Stamina(delta):
 
 func Clamp():
     var maxHP = 100.0
-    if xp_mod: maxHP += xp_mod.xpHealth * xp_mod.cfg_hp_per_level
+    if xp_mod: maxHP += xp_mod.get_level(0) * xp_mod.cfg_hp_per_level
     gameData.health = clampf(gameData.health, 0, maxHP)
     gameData.energy = clampf(gameData.energy, 0, 100)
     gameData.hydration = clampf(gameData.hydration, 0, 100)
@@ -138,7 +138,7 @@ func Temperature(delta):
         gameData.temperature += delta
     elif gameData.season == 2:
         var coldMult = 1.0
-        if xp_mod: coldMult = 1.0 - (xp_mod.xpColdRes * xp_mod.cfg_coldres_reduce)
+        if xp_mod: coldMult = 1.0 - (xp_mod.get_level(7) * xp_mod.cfg_coldres_reduce)
 
         if !gameData.frostbite:
             if gameData.isSubmerged:
