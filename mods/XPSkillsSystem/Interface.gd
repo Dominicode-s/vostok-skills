@@ -141,6 +141,7 @@ func BuildSkillsUI():
     skillsButton = Button.new()
     skillsButton.text = "Skills"
     skillsButton.toggle_mode = true
+    skillsButton.focus_mode = Control.FOCUS_NONE
     skillsButton.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     skillsButton.size_flags_vertical = Control.SIZE_EXPAND_FILL
     buttonsContainer.add_child(skillsButton)
@@ -248,6 +249,7 @@ func BuildSkillsUI():
         upgradeBtn.text = "+" + str(skillCostBase[i]) + " XP"
         upgradeBtn.custom_minimum_size.x = 90
         upgradeBtn.custom_minimum_size.y = 30
+        upgradeBtn.focus_mode = Control.FOCUS_NONE
         upgradeBtn.pressed.connect(_on_skill_upgrade.bind(i))
         row.add_child(upgradeBtn)
 

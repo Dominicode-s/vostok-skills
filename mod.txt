@@ -1,7 +1,8 @@
 [mod]
 name="XP & Skills System"
 id="xp-skills-system"
-version="1.3.0"
+version="1.3.1"
+priority=0
 [autoload]
 XPMain="res://mods/XPSkillsSystem/Main.gd"
 [updates]
