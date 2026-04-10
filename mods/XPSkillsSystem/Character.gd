@@ -3,7 +3,6 @@ extends "res://Scripts/Character.gd"
 var xp_mod = null
 
 func _ready():
-    super()
     xp_mod = Engine.get_meta("XPMain", null)
 
 func Health(delta):

@@ -1,5 +1,8 @@
 # XP & Skills System — Changelog
 
+### v1.3.2
+- Fixed skills not applying (Vitality HP, etc.) — reverted super() call in Character.gd that conflicted with base game initialization
+
 ### v1.3.1
 - Added null guards in LootContainer.gd to prevent crashes
 - Added super() calls in Character.gd and Recoil.gd overrides
