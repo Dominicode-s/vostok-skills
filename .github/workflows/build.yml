@@ -1,0 +1,29 @@
+name: Build VMZ
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read mod version
+        id: version
+        run: |
+          VERSION=$(grep '^version=' mod.txt | head -1 | cut -d'"' -f2)
+          NAME=$(grep '^name=' mod.txt | head -1 | cut -d'"' -f2)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "name=$NAME" >> $GITHUB_OUTPUT
+
+      - name: Build VMZ
+        run: |
+          zip -r "XP-Skills-System.vmz" mod.txt mods/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: XP-Skills-System-v${{ steps.version.outputs.version }}
+          path: XP-Skills-System.vmz
