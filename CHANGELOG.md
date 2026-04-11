@@ -1,5 +1,9 @@
 # XP & Skills System — Changelog
 
+### v1.5.2
+- Fixed kills not awarding XP — `isFiring` timing race condition in game's physics frame
+- Kill detection now checks `Input.is_action_pressed("fire")` for reliable same-frame attribution
+
 ### v1.5.1
 - Fixed XP/skills persisting across new games — starting a new character now properly resets mod XP
 - Uses a `.tres` marker file that the game's save wipe automatically cleans on new game
