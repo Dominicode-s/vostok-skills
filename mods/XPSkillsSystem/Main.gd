@@ -1,5 +1,13 @@
 extends Node
 
+var gameData = preload("res://Resources/GameData.tres")
+
+# Kill Attribution — grenade tracking
+const GRENADE_WINDOW_MS: int = 6000
+var last_grenade_time: int = 0
+var _prev_grenade1: bool = false
+var _prev_grenade2: bool = false
+
 # XP State
 var xp: int = 0
 var xpTotal: int = 0
@@ -75,6 +83,22 @@ func _ready():
     overrideScript("res://mods/XPSkillsSystem/Trader.gd")
     overrideScript("res://mods/XPSkillsSystem/Recoil.gd")
     overrideScript("res://mods/XPSkillsSystem/Controller.gd")
+
+func _process(_delta):
+    # Track grenade throws for kill attribution
+    var g1 = gameData.grenade1 if "grenade1" in gameData else false
+    var g2 = gameData.grenade2 if "grenade2" in gameData else false
+    if (_prev_grenade1 and !g1) or (_prev_grenade2 and !g2):
+        last_grenade_time = Time.get_ticks_msec()
+    _prev_grenade1 = g1
+    _prev_grenade2 = g2
+
+func is_player_kill() -> bool:
+    if gameData.isFiring:
+        return true
+    if last_grenade_time > 0 and (Time.get_ticks_msec() - last_grenade_time) <= GRENADE_WINDOW_MS:
+        return true
+    return false
 
 func overrideScript(path: String):
     var script = load(path)
