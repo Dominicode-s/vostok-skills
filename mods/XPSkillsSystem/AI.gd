@@ -2,15 +2,16 @@ extends "res://Scripts/AI.gd"
 
 func Death(direction, force):
     super(direction, force)
-    # Only award XP if the player recently fired (filters AI-on-AI kills from Faction Warfare etc.)
-    if not gameData.isFiring:
-        return
     var xp_mod = Engine.get_meta("XPMain", null)
-    if xp_mod:
-        var xpReward = xp_mod.cfg_xp_boss if boss else xp_mod.cfg_xp_kill
-        xp_mod.xp += xpReward
-        xp_mod.xpTotal += xpReward
-        xp_mod.SaveXP()
+    if not xp_mod:
+        return
+    # Only award XP for player kills (filters AI-on-AI from Faction Warfare etc.)
+    if not xp_mod.is_player_kill():
+        return
+    var xpReward = xp_mod.cfg_xp_boss if boss else xp_mod.cfg_xp_kill
+    xp_mod.xp += xpReward
+    xp_mod.xpTotal += xpReward
+    xp_mod.SaveXP()
 
 func Hearing():
     var runRange = 20.0
