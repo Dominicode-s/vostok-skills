@@ -1,5 +1,10 @@
 # XP & Skills System — Changelog
 
+### v1.4.1
+- Fixed AI-on-AI kills (Faction Warfare) incorrectly awarding XP to the player
+- Added grenade kill attribution — grenade kills now properly award XP
+- Kill detection uses `isFiring` for gun kills and grenade throw tracking with a time window
+
 ### v1.4.0
 - New skill: Scavenger — chance to find extra loot when opening containers (5% per level, max 25%)
 - Added per-skill enable/disable toggles in MCM — disabled skills are hidden from the UI
