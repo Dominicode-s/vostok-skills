@@ -8,10 +8,12 @@ var skillNames = ["Vitality", "Endurance", "Pack Mule", "Hunger Resist", "Thirst
 var skillKeys = ["xpHealth", "xpStamina", "xpCarry", "xpHunger", "xpThirst", "xpMental", "xpRegen", "xpColdRes", "xpStealth", "xpRecoil", "xpSpeed", "xpScavenger"]
 var skillMax = [10, 10, 10, 10, 10, 10, 5, 10, 10, 10, 5, 5]
 var skillCostBase = [25, 25, 20, 20, 20, 20, 50, 20, 25, 25, 30, 30]
-var skillDescs = ["+5 Max HP", "-10% Stamina Drain", "+2kg Carry Weight", "-8% Hunger Drain", "-8% Thirst Drain", "-8% Mental Drain", "+0.2 HP/sec Regen", "-8% Cold Drain", "-5% AI Hearing Range", "-5% Weapon Recoil", "+4% Movement Speed", "+5% Extra Loot Chance"]
+var skillDescs = ["+5 Max HP", "-10% Stamina Drain", "+2kg Carry Weight", "-8% Hunger Drain", "-8% Thirst Drain", "-8% Mental Drain", "+0.2 HP/sec Regen", "-8% Cold Drain", "-5% AI Hearing Range", "-5% Weapon Recoil", "+4% Movement Speed", "+5% Loot Chance (better at higher levels)"]
 var skillsBuilt = false
 var skillDescLabels: Array = []
 var _xp_refresh_timer: float = 0.0
+var _skills_vbox: VBoxContainer
+var _skill_row_panels: Array = []
 
 func _process(delta):
     if skillsUI and skillsUI.visible:
@@ -137,6 +139,7 @@ func UpdateStats(updateLabels: bool):
 # --- Skills UI ---
 
 func BuildSkillsUI():
+    Engine.set_meta("XPInterface", self)
     var buttonsContainer = $Tools / Buttons / Margin / Buttons
     skillsButton = Button.new()
     skillsButton.text = "Skills"
@@ -177,14 +180,14 @@ func BuildSkillsUI():
     scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
     margin.add_child(scroll)
 
-    var vbox = VBoxContainer.new()
-    vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    vbox.add_theme_constant_override("separation", 10)
-    scroll.add_child(vbox)
+    _skills_vbox = VBoxContainer.new()
+    _skills_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _skills_vbox.add_theme_constant_override("separation", 10)
+    scroll.add_child(_skills_vbox)
 
     var header = HBoxContainer.new()
     header.add_theme_constant_override("separation", 16)
-    vbox.add_child(header)
+    _skills_vbox.add_child(header)
 
     var titleLabel = Label.new()
     titleLabel.text = "SKILLS"
@@ -202,8 +205,13 @@ func BuildSkillsUI():
 
     var sep = HSeparator.new()
     sep.custom_minimum_size.y = 4
-    vbox.add_child(sep)
+    _skills_vbox.add_child(sep)
 
+    _build_skill_rows()
+
+
+func _build_skill_rows():
+    var xp_mod = Engine.get_meta("XPMain", null)
     skillRows.clear()
     skillDescLabels.clear()
     for i in skillNames.size():
@@ -221,7 +229,7 @@ func BuildSkillsUI():
         stylebox.content_margin_top = 6
         stylebox.content_margin_bottom = 6
         rowPanel.add_theme_stylebox_override("panel", stylebox)
-        vbox.add_child(rowPanel)
+        _skills_vbox.add_child(rowPanel)
 
         var row = HBoxContainer.new()
         row.add_theme_constant_override("separation", 10)
@@ -259,6 +267,19 @@ func BuildSkillsUI():
         row.add_child(upgradeBtn)
 
         skillRows.append({"level": levelLabel, "button": upgradeBtn, "index": i})
+        _skill_row_panels.append(rowPanel)
+
+
+func RebuildSkills():
+    if not skillsBuilt or not _skills_vbox:
+        return
+    for panel in _skill_row_panels:
+        if panel and is_instance_valid(panel):
+            panel.queue_free()
+    _skill_row_panels.clear()
+    _build_skill_rows()
+    RefreshSkillDescs()
+    UpdateSkillsUI()
 
 
 func RefreshSkillDescs():

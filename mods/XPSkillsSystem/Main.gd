@@ -277,30 +277,39 @@ func _register_mcm():
 
 func _on_mcm_save(config: ConfigFile):
     _apply_mcm_config(config)
+    var ui = Engine.get_meta("XPInterface", null)
+    if ui:
+        ui.RebuildSkills()
+
+func _mcm_val(config: ConfigFile, section: String, key: String, fallback):
+    var entry = config.get_value(section, key, null)
+    if entry == null or not entry is Dictionary:
+        return fallback
+    return entry.get("value", fallback)
 
 func _apply_mcm_config(config: ConfigFile):
     for sid in skill_ids:
         var key = "cfg_skill_" + sid
         if config.has_section_key("Bool", key):
-            cfg_skill_enabled[sid] = config.get_value("Bool", key)["value"]
-    cfg_xp_container = config.get_value("Int", "cfg_xp_container")["value"]
-    cfg_xp_kill = config.get_value("Int", "cfg_xp_kill")["value"]
-    cfg_xp_boss = config.get_value("Int", "cfg_xp_boss")["value"]
-    cfg_xp_trade = config.get_value("Int", "cfg_xp_trade")["value"]
-    cfg_xp_task = config.get_value("Int", "cfg_xp_task")["value"]
-    cfg_death_resets = config.get_value("Bool", "cfg_death_resets")["value"]
-    cfg_hp_per_level = config.get_value("Float", "cfg_hp_per_level")["value"]
-    cfg_stamina_reduce = config.get_value("Float", "cfg_stamina_reduce")["value"]
-    cfg_carry_per_level = config.get_value("Float", "cfg_carry_per_level")["value"]
-    cfg_hunger_reduce = config.get_value("Float", "cfg_hunger_reduce")["value"]
-    cfg_thirst_reduce = config.get_value("Float", "cfg_thirst_reduce")["value"]
-    cfg_mental_reduce = config.get_value("Float", "cfg_mental_reduce")["value"]
-    cfg_regen_per_level = config.get_value("Float", "cfg_regen_per_level")["value"]
-    cfg_coldres_reduce = config.get_value("Float", "cfg_coldres_reduce")["value"]
-    cfg_stealth_reduce = config.get_value("Float", "cfg_stealth_reduce")["value"]
-    cfg_recoil_reduce = config.get_value("Float", "cfg_recoil_reduce")["value"]
-    cfg_speed_bonus = config.get_value("Float", "cfg_speed_bonus")["value"]
-    cfg_scavenger_chance = config.get_value("Float", "cfg_scavenger_chance")["value"]
+            cfg_skill_enabled[sid] = _mcm_val(config, "Bool", key, cfg_skill_enabled.get(sid, true))
+    cfg_xp_container = _mcm_val(config, "Int", "cfg_xp_container", cfg_xp_container)
+    cfg_xp_kill = _mcm_val(config, "Int", "cfg_xp_kill", cfg_xp_kill)
+    cfg_xp_boss = _mcm_val(config, "Int", "cfg_xp_boss", cfg_xp_boss)
+    cfg_xp_trade = _mcm_val(config, "Int", "cfg_xp_trade", cfg_xp_trade)
+    cfg_xp_task = _mcm_val(config, "Int", "cfg_xp_task", cfg_xp_task)
+    cfg_death_resets = _mcm_val(config, "Bool", "cfg_death_resets", cfg_death_resets)
+    cfg_hp_per_level = _mcm_val(config, "Float", "cfg_hp_per_level", cfg_hp_per_level)
+    cfg_stamina_reduce = _mcm_val(config, "Float", "cfg_stamina_reduce", cfg_stamina_reduce)
+    cfg_carry_per_level = _mcm_val(config, "Float", "cfg_carry_per_level", cfg_carry_per_level)
+    cfg_hunger_reduce = _mcm_val(config, "Float", "cfg_hunger_reduce", cfg_hunger_reduce)
+    cfg_thirst_reduce = _mcm_val(config, "Float", "cfg_thirst_reduce", cfg_thirst_reduce)
+    cfg_mental_reduce = _mcm_val(config, "Float", "cfg_mental_reduce", cfg_mental_reduce)
+    cfg_regen_per_level = _mcm_val(config, "Float", "cfg_regen_per_level", cfg_regen_per_level)
+    cfg_coldres_reduce = _mcm_val(config, "Float", "cfg_coldres_reduce", cfg_coldres_reduce)
+    cfg_stealth_reduce = _mcm_val(config, "Float", "cfg_stealth_reduce", cfg_stealth_reduce)
+    cfg_recoil_reduce = _mcm_val(config, "Float", "cfg_recoil_reduce", cfg_recoil_reduce)
+    cfg_speed_bonus = _mcm_val(config, "Float", "cfg_speed_bonus", cfg_speed_bonus)
+    cfg_scavenger_chance = _mcm_val(config, "Float", "cfg_scavenger_chance", cfg_scavenger_chance)
 
 # --- Fallback config (used when MCM is not installed) ---
 
