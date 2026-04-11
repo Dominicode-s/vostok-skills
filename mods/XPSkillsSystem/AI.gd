@@ -2,6 +2,9 @@ extends "res://Scripts/AI.gd"
 
 func Death(direction, force):
     super(direction, force)
+    # Only award XP if the player recently fired (filters AI-on-AI kills from Faction Warfare etc.)
+    if not gameData.isFiring:
+        return
     var xp_mod = Engine.get_meta("XPMain", null)
     if xp_mod:
         var xpReward = xp_mod.cfg_xp_boss if boss else xp_mod.cfg_xp_kill
