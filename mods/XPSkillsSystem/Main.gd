@@ -2,6 +2,9 @@ extends Node
 
 var gameData = preload("res://Resources/GameData.tres")
 
+# New-game detection — marker file is wiped by FormatSave() on new game
+var _prev_menu: bool = false
+
 # Kill Attribution — grenade tracking
 const GRENADE_WINDOW_MS: int = 6000
 var last_grenade_time: int = 0
@@ -85,6 +88,14 @@ func _ready():
     overrideScript("res://mods/XPSkillsSystem/Controller.gd")
 
 func _process(_delta):
+    # Detect menu→game transition to check for new game
+    if _prev_menu and !gameData.menu:
+        if !FileAccess.file_exists("user://XPSkillsMarker.tres"):
+            ResetXP()
+            print("[XP Skills] New game detected — XP reset")
+        _ensure_marker()
+    _prev_menu = gameData.menu
+
     # Track grenade throws for kill attribution
     var g1 = gameData.grenade1 if "grenade1" in gameData else false
     var g2 = gameData.grenade2 if "grenade2" in gameData else false
@@ -94,6 +105,10 @@ func _process(_delta):
     _prev_grenade2 = g2
 
 func is_player_kill() -> bool:
+    # Check raw input first — isFiring has a timing issue where FireImpulse()
+    # runs AFTER Raycast→Death in the same _physics_process frame
+    if Input.is_action_pressed("fire"):
+        return true
     if gameData.isFiring:
         return true
     if last_grenade_time > 0 and (Time.get_ticks_msec() - last_grenade_time) <= GRENADE_WINDOW_MS:
@@ -197,95 +212,101 @@ func _register_mcm():
         "default" = true, "value" = true,
         "menu_pos" = 18
     })
-    _config.set_value("Float", "cfg_hp_per_level", {
+    _config.set_value("Int", "cfg_hp_per_level", {
         "name" = "HP Per Level",
         "tooltip" = "Max HP bonus per Vitality level",
-        "default" = 5.0, "value" = 5.0,
-        "minRange" = 1.0, "maxRange" = 25.0,
+        "default" = 5, "value" = 5,
+        "minRange" = 1, "maxRange" = 25,
         "menu_pos" = 19
     })
-    _config.set_value("Float", "cfg_stamina_reduce", {
-        "name" = "Stamina Drain Reduce",
-        "tooltip" = "Stamina drain reduction per Endurance level (fraction, e.g. 0.10 = 10%)",
-        "default" = 0.10, "value" = 0.10,
-        "minRange" = 0.01, "maxRange" = 0.20,
+    _config.set_value("Int", "cfg_stamina_reduce", {
+        "name" = "Stamina Drain Reduce (%)",
+        "tooltip" = "Stamina drain reduction per Endurance level (10 = 10% per level)",
+        "default" = 10, "value" = 10,
+        "minRange" = 1, "maxRange" = 20,
         "menu_pos" = 20
     })
-    _config.set_value("Float", "cfg_carry_per_level", {
-        "name" = "Carry Weight Per Level",
+    _config.set_value("Int", "cfg_carry_per_level", {
+        "name" = "Carry Weight Per Level (kg)",
         "tooltip" = "Extra carry weight (kg) per Pack Mule level",
-        "default" = 2.0, "value" = 2.0,
-        "minRange" = 0.5, "maxRange" = 10.0,
+        "default" = 2, "value" = 2,
+        "minRange" = 1, "maxRange" = 10,
         "menu_pos" = 21
     })
-    _config.set_value("Float", "cfg_hunger_reduce", {
-        "name" = "Hunger Drain Reduce",
-        "tooltip" = "Hunger drain reduction per Hunger Resist level (fraction)",
-        "default" = 0.08, "value" = 0.08,
-        "minRange" = 0.01, "maxRange" = 0.20,
+    _config.set_value("Int", "cfg_hunger_reduce", {
+        "name" = "Hunger Drain Reduce (%)",
+        "tooltip" = "Hunger drain reduction per Hunger Resist level (8 = 8% per level)",
+        "default" = 8, "value" = 8,
+        "minRange" = 1, "maxRange" = 20,
         "menu_pos" = 22
     })
-    _config.set_value("Float", "cfg_thirst_reduce", {
-        "name" = "Thirst Drain Reduce",
-        "tooltip" = "Thirst drain reduction per Thirst Resist level (fraction)",
-        "default" = 0.08, "value" = 0.08,
-        "minRange" = 0.01, "maxRange" = 0.20,
+    _config.set_value("Int", "cfg_thirst_reduce", {
+        "name" = "Thirst Drain Reduce (%)",
+        "tooltip" = "Thirst drain reduction per Thirst Resist level (8 = 8% per level)",
+        "default" = 8, "value" = 8,
+        "minRange" = 1, "maxRange" = 20,
         "menu_pos" = 23
     })
-    _config.set_value("Float", "cfg_mental_reduce", {
-        "name" = "Mental Drain Reduce",
-        "tooltip" = "Mental drain reduction per Iron Will level (fraction)",
-        "default" = 0.08, "value" = 0.08,
-        "minRange" = 0.01, "maxRange" = 0.20,
+    _config.set_value("Int", "cfg_mental_reduce", {
+        "name" = "Mental Drain Reduce (%)",
+        "tooltip" = "Mental drain reduction per Iron Will level (8 = 8% per level)",
+        "default" = 8, "value" = 8,
+        "minRange" = 1, "maxRange" = 20,
         "menu_pos" = 24
     })
-    _config.set_value("Float", "cfg_regen_per_level", {
-        "name" = "Regen Per Level",
-        "tooltip" = "HP/sec passive regeneration per Regeneration level",
-        "default" = 0.2, "value" = 0.2,
-        "minRange" = 0.1, "maxRange" = 2.0,
+    _config.set_value("Int", "cfg_regen_per_level", {
+        "name" = "Regen Per Level (×0.1 HP/s)",
+        "tooltip" = "HP/sec passive regeneration per Regeneration level (2 = 0.2 HP/s per level)",
+        "default" = 2, "value" = 2,
+        "minRange" = 1, "maxRange" = 20,
         "menu_pos" = 25
     })
-    _config.set_value("Float", "cfg_coldres_reduce", {
-        "name" = "Cold Resist Reduce",
-        "tooltip" = "Temperature loss reduction per Cold Resistance level (fraction, e.g. 0.08 = 8%)",
-        "default" = 0.08, "value" = 0.08,
-        "minRange" = 0.01, "maxRange" = 0.20,
+    _config.set_value("Int", "cfg_coldres_reduce", {
+        "name" = "Cold Resist Reduce (%)",
+        "tooltip" = "Temperature loss reduction per Cold Resistance level (8 = 8% per level)",
+        "default" = 8, "value" = 8,
+        "minRange" = 1, "maxRange" = 20,
         "menu_pos" = 26
     })
-    _config.set_value("Float", "cfg_stealth_reduce", {
-        "name" = "Stealth Hearing Reduce",
-        "tooltip" = "AI hearing range reduction per Stealth level (fraction, e.g. 0.05 = 5%)",
-        "default" = 0.05, "value" = 0.05,
-        "minRange" = 0.01, "maxRange" = 0.15,
+    _config.set_value("Int", "cfg_stealth_reduce", {
+        "name" = "Stealth Hearing Reduce (%)",
+        "tooltip" = "AI hearing range reduction per Stealth level (5 = 5% per level)",
+        "default" = 5, "value" = 5,
+        "minRange" = 1, "maxRange" = 15,
         "menu_pos" = 27
     })
-    _config.set_value("Float", "cfg_recoil_reduce", {
-        "name" = "Recoil Reduce Per Level",
-        "tooltip" = "Weapon recoil reduction per Recoil Control level (fraction, e.g. 0.05 = 5%)",
-        "default" = 0.05, "value" = 0.05,
-        "minRange" = 0.01, "maxRange" = 0.15,
+    _config.set_value("Int", "cfg_recoil_reduce", {
+        "name" = "Recoil Reduce Per Level (%)",
+        "tooltip" = "Weapon recoil reduction per Recoil Control level (5 = 5% per level)",
+        "default" = 5, "value" = 5,
+        "minRange" = 1, "maxRange" = 15,
         "menu_pos" = 28
     })
-    _config.set_value("Float", "cfg_speed_bonus", {
-        "name" = "Speed Bonus Per Level",
-        "tooltip" = "Movement speed increase per Athleticism level (fraction, e.g. 0.04 = 4%)",
-        "default" = 0.04, "value" = 0.04,
-        "minRange" = 0.01, "maxRange" = 0.10,
+    _config.set_value("Int", "cfg_speed_bonus", {
+        "name" = "Speed Bonus Per Level (%)",
+        "tooltip" = "Movement speed increase per Athleticism level (4 = 4% per level)",
+        "default" = 4, "value" = 4,
+        "minRange" = 1, "maxRange" = 10,
         "menu_pos" = 29
     })
-    _config.set_value("Float", "cfg_scavenger_chance", {
-        "name" = "Scavenger Chance Per Level",
-        "tooltip" = "Chance to find extra loot per Scavenger level (fraction, e.g. 0.05 = 5%)",
-        "default" = 0.05, "value" = 0.05,
-        "minRange" = 0.01, "maxRange" = 0.15,
+    _config.set_value("Int", "cfg_scavenger_chance", {
+        "name" = "Scavenger Chance Per Level (%)",
+        "tooltip" = "Chance to find extra loot per Scavenger level (5 = 5% per level)",
+        "default" = 5, "value" = 5,
+        "minRange" = 1, "maxRange" = 15,
         "menu_pos" = 30
     })
 
     if !FileAccess.file_exists(MCM_FILE_PATH + "/config.ini"):
-        DirAccess.open("user://").make_dir(MCM_FILE_PATH)
+        DirAccess.open("user://").make_dir_recursive(MCM_FILE_PATH)
         _config.save(MCM_FILE_PATH + "/config.ini")
     else:
+        # Migrate: remove stale Float section from older versions
+        var _saved = ConfigFile.new()
+        _saved.load(MCM_FILE_PATH + "/config.ini")
+        if _saved.has_section("Float"):
+            _saved.erase_section("Float")
+            _saved.save(MCM_FILE_PATH + "/config.ini")
         _mcm_helpers.CheckConfigurationHasUpdated(MCM_MOD_ID, _config, MCM_FILE_PATH + "/config.ini")
         _config.load(MCM_FILE_PATH + "/config.ini")
 
@@ -322,18 +343,18 @@ func _apply_mcm_config(config: ConfigFile):
     cfg_xp_trade = _mcm_val(config, "Int", "cfg_xp_trade", cfg_xp_trade)
     cfg_xp_task = _mcm_val(config, "Int", "cfg_xp_task", cfg_xp_task)
     cfg_death_resets = _mcm_val(config, "Bool", "cfg_death_resets", cfg_death_resets)
-    cfg_hp_per_level = _mcm_val(config, "Float", "cfg_hp_per_level", cfg_hp_per_level)
-    cfg_stamina_reduce = _mcm_val(config, "Float", "cfg_stamina_reduce", cfg_stamina_reduce)
-    cfg_carry_per_level = _mcm_val(config, "Float", "cfg_carry_per_level", cfg_carry_per_level)
-    cfg_hunger_reduce = _mcm_val(config, "Float", "cfg_hunger_reduce", cfg_hunger_reduce)
-    cfg_thirst_reduce = _mcm_val(config, "Float", "cfg_thirst_reduce", cfg_thirst_reduce)
-    cfg_mental_reduce = _mcm_val(config, "Float", "cfg_mental_reduce", cfg_mental_reduce)
-    cfg_regen_per_level = _mcm_val(config, "Float", "cfg_regen_per_level", cfg_regen_per_level)
-    cfg_coldres_reduce = _mcm_val(config, "Float", "cfg_coldres_reduce", cfg_coldres_reduce)
-    cfg_stealth_reduce = _mcm_val(config, "Float", "cfg_stealth_reduce", cfg_stealth_reduce)
-    cfg_recoil_reduce = _mcm_val(config, "Float", "cfg_recoil_reduce", cfg_recoil_reduce)
-    cfg_speed_bonus = _mcm_val(config, "Float", "cfg_speed_bonus", cfg_speed_bonus)
-    cfg_scavenger_chance = _mcm_val(config, "Float", "cfg_scavenger_chance", cfg_scavenger_chance)
+    cfg_hp_per_level = float(_mcm_val(config, "Int", "cfg_hp_per_level", 5))
+    cfg_stamina_reduce = _mcm_val(config, "Int", "cfg_stamina_reduce", 10) / 100.0
+    cfg_carry_per_level = float(_mcm_val(config, "Int", "cfg_carry_per_level", 2))
+    cfg_hunger_reduce = _mcm_val(config, "Int", "cfg_hunger_reduce", 8) / 100.0
+    cfg_thirst_reduce = _mcm_val(config, "Int", "cfg_thirst_reduce", 8) / 100.0
+    cfg_mental_reduce = _mcm_val(config, "Int", "cfg_mental_reduce", 8) / 100.0
+    cfg_regen_per_level = _mcm_val(config, "Int", "cfg_regen_per_level", 2) / 10.0
+    cfg_coldres_reduce = _mcm_val(config, "Int", "cfg_coldres_reduce", 8) / 100.0
+    cfg_stealth_reduce = _mcm_val(config, "Int", "cfg_stealth_reduce", 5) / 100.0
+    cfg_recoil_reduce = _mcm_val(config, "Int", "cfg_recoil_reduce", 5) / 100.0
+    cfg_speed_bonus = _mcm_val(config, "Int", "cfg_speed_bonus", 4) / 100.0
+    cfg_scavenger_chance = _mcm_val(config, "Int", "cfg_scavenger_chance", 5) / 100.0
 
 # --- Fallback config (used when MCM is not installed) ---
 
@@ -421,6 +442,7 @@ func SaveXP():
     cfg.set_value("xp", "xpSpeed", xpSpeed)
     cfg.set_value("xp", "xpScavenger", xpScavenger)
     cfg.save("user://XPData.cfg")
+    _ensure_marker()
 
 func LoadXP():
     var cfg = ConfigFile.new()
@@ -457,3 +479,8 @@ func ResetXP():
     xpScavenger = 0
     if FileAccess.file_exists("user://XPData.cfg"):
         DirAccess.remove_absolute(ProjectSettings.globalize_path("user://XPData.cfg"))
+
+func _ensure_marker():
+    if !FileAccess.file_exists("user://XPSkillsMarker.tres"):
+        var marker = Resource.new()
+        ResourceSaver.save(marker, "user://XPSkillsMarker.tres")
