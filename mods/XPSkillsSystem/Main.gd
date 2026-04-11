@@ -14,6 +14,7 @@ var xpColdRes: int = 0
 var xpStealth: int = 0
 var xpRecoil: int = 0
 var xpSpeed: int = 0
+var xpScavenger: int = 0
 
 # Config — XP rewards
 var cfg_xp_container: int = 1
@@ -37,12 +38,22 @@ var cfg_coldres_reduce: float = 0.08
 var cfg_stealth_reduce: float = 0.05
 var cfg_recoil_reduce: float = 0.05
 var cfg_speed_bonus: float = 0.04
+var cfg_scavenger_chance: float = 0.05
 
 # Config — Skill max levels
-var cfg_max_levels: Array = [10, 10, 10, 10, 10, 10, 5, 10, 10, 10, 5]
+var cfg_max_levels: Array = [10, 10, 10, 10, 10, 10, 5, 10, 10, 10, 5, 5]
 
 # Config — Skill cost bases
-var cfg_cost_bases: Array = [25, 25, 20, 20, 20, 20, 50, 20, 25, 25, 30]
+var cfg_cost_bases: Array = [25, 25, 20, 20, 20, 20, 50, 20, 25, 25, 30, 30]
+
+# Config — Skill enabled toggles (index matches skill order)
+var skill_ids: Array = ["vitality", "endurance", "pack_mule", "hunger_resist", "thirst_resist", "iron_will", "regeneration", "cold_resistance", "stealth", "recoil_control", "athleticism", "scavenger"]
+var cfg_skill_enabled: Dictionary = {
+	"vitality": true, "endurance": true, "pack_mule": true,
+	"hunger_resist": true, "thirst_resist": true, "iron_will": true,
+	"regeneration": true, "cold_resistance": true, "stealth": true,
+	"recoil_control": true, "athleticism": true, "scavenger": true
+}
 
 # MCM integration
 var _mcm_helpers = null
@@ -77,6 +88,29 @@ func overrideScript(path: String):
         return
     script.take_over_path(parent.resource_path)
 
+func is_skill_enabled(index: int) -> bool:
+    if index < 0 or index >= skill_ids.size():
+        return false
+    return cfg_skill_enabled.get(skill_ids[index], true)
+
+func get_level(index: int) -> int:
+    if not is_skill_enabled(index):
+        return 0
+    match index:
+        0: return xpHealth
+        1: return xpStamina
+        2: return xpCarry
+        3: return xpHunger
+        4: return xpThirst
+        5: return xpMental
+        6: return xpRegen
+        7: return xpColdRes
+        8: return xpStealth
+        9: return xpRecoil
+        10: return xpSpeed
+        11: return xpScavenger
+    return 0
+
 # --- MCM Integration ---
 
 func _try_load_mcm():
@@ -87,123 +121,141 @@ func _try_load_mcm():
 func _register_mcm():
     var _config = ConfigFile.new()
 
+    var skill_names_display = ["Vitality", "Endurance", "Pack Mule", "Hunger Resist", "Thirst Resist", "Iron Will", "Regeneration", "Cold Resistance", "Stealth", "Recoil Control", "Athleticism", "Scavenger"]
+    var menu_pos = 1
+    for i in skill_ids.size():
+        _config.set_value("Bool", "cfg_skill_" + skill_ids[i], {
+            "name" = "Enable " + skill_names_display[i],
+            "tooltip" = "Show " + skill_names_display[i] + " in the Skills menu",
+            "default" = true, "value" = true,
+            "menu_pos" = menu_pos
+        })
+        menu_pos += 1
+
     _config.set_value("Int", "cfg_xp_container", {
         "name" = "Container Search XP",
         "tooltip" = "XP earned when searching containers",
         "default" = 1, "value" = 1,
         "minRange" = 0, "maxRange" = 50,
-        "menu_pos" = 1
+        "menu_pos" = 13
     })
     _config.set_value("Int", "cfg_xp_kill", {
         "name" = "Enemy Kill XP",
         "tooltip" = "XP earned per enemy kill",
         "default" = 25, "value" = 25,
         "minRange" = 0, "maxRange" = 200,
-        "menu_pos" = 2
+        "menu_pos" = 14
     })
     _config.set_value("Int", "cfg_xp_boss", {
         "name" = "Boss Kill XP",
         "tooltip" = "XP earned per boss kill",
         "default" = 100, "value" = 100,
         "minRange" = 0, "maxRange" = 500,
-        "menu_pos" = 3
+        "menu_pos" = 15
     })
     _config.set_value("Int", "cfg_xp_trade", {
         "name" = "Trade XP",
         "tooltip" = "XP earned when completing a trade",
         "default" = 10, "value" = 10,
         "minRange" = 0, "maxRange" = 100,
-        "menu_pos" = 4
+        "menu_pos" = 16
     })
     _config.set_value("Int", "cfg_xp_task", {
         "name" = "Task Complete XP",
         "tooltip" = "XP earned when completing a task",
         "default" = 50, "value" = 50,
         "minRange" = 0, "maxRange" = 500,
-        "menu_pos" = 5
+        "menu_pos" = 17
     })
     _config.set_value("Bool", "cfg_death_resets", {
         "name" = "Death Resets XP",
         "tooltip" = "Reset all XP and skill levels on death",
         "default" = true, "value" = true,
-        "menu_pos" = 6
+        "menu_pos" = 18
     })
     _config.set_value("Float", "cfg_hp_per_level", {
         "name" = "HP Per Level",
         "tooltip" = "Max HP bonus per Vitality level",
         "default" = 5.0, "value" = 5.0,
         "minRange" = 1.0, "maxRange" = 25.0,
-        "menu_pos" = 7
+        "menu_pos" = 19
     })
     _config.set_value("Float", "cfg_stamina_reduce", {
         "name" = "Stamina Drain Reduce",
         "tooltip" = "Stamina drain reduction per Endurance level (fraction, e.g. 0.10 = 10%)",
         "default" = 0.10, "value" = 0.10,
         "minRange" = 0.01, "maxRange" = 0.20,
-        "menu_pos" = 8
+        "menu_pos" = 20
     })
     _config.set_value("Float", "cfg_carry_per_level", {
         "name" = "Carry Weight Per Level",
         "tooltip" = "Extra carry weight (kg) per Pack Mule level",
         "default" = 2.0, "value" = 2.0,
         "minRange" = 0.5, "maxRange" = 10.0,
-        "menu_pos" = 9
+        "menu_pos" = 21
     })
     _config.set_value("Float", "cfg_hunger_reduce", {
         "name" = "Hunger Drain Reduce",
         "tooltip" = "Hunger drain reduction per Hunger Resist level (fraction)",
         "default" = 0.08, "value" = 0.08,
         "minRange" = 0.01, "maxRange" = 0.20,
-        "menu_pos" = 10
+        "menu_pos" = 22
     })
     _config.set_value("Float", "cfg_thirst_reduce", {
         "name" = "Thirst Drain Reduce",
         "tooltip" = "Thirst drain reduction per Thirst Resist level (fraction)",
         "default" = 0.08, "value" = 0.08,
         "minRange" = 0.01, "maxRange" = 0.20,
-        "menu_pos" = 11
+        "menu_pos" = 23
     })
     _config.set_value("Float", "cfg_mental_reduce", {
         "name" = "Mental Drain Reduce",
         "tooltip" = "Mental drain reduction per Iron Will level (fraction)",
         "default" = 0.08, "value" = 0.08,
         "minRange" = 0.01, "maxRange" = 0.20,
-        "menu_pos" = 12
+        "menu_pos" = 24
     })
     _config.set_value("Float", "cfg_regen_per_level", {
         "name" = "Regen Per Level",
         "tooltip" = "HP/sec passive regeneration per Regeneration level",
         "default" = 0.2, "value" = 0.2,
         "minRange" = 0.1, "maxRange" = 2.0,
-        "menu_pos" = 13
+        "menu_pos" = 25
     })
     _config.set_value("Float", "cfg_coldres_reduce", {
         "name" = "Cold Resist Reduce",
         "tooltip" = "Temperature loss reduction per Cold Resistance level (fraction, e.g. 0.08 = 8%)",
         "default" = 0.08, "value" = 0.08,
         "minRange" = 0.01, "maxRange" = 0.20,
-        "menu_pos" = 14
+        "menu_pos" = 26
     })
     _config.set_value("Float", "cfg_stealth_reduce", {
         "name" = "Stealth Hearing Reduce",
         "tooltip" = "AI hearing range reduction per Stealth level (fraction, e.g. 0.05 = 5%)",
         "default" = 0.05, "value" = 0.05,
         "minRange" = 0.01, "maxRange" = 0.15,
-        "menu_pos" = 15
+        "menu_pos" = 27
     })
     _config.set_value("Float", "cfg_recoil_reduce", {
         "name" = "Recoil Reduce Per Level",
         "tooltip" = "Weapon recoil reduction per Recoil Control level (fraction, e.g. 0.05 = 5%)",
         "default" = 0.05, "value" = 0.05,
         "minRange" = 0.01, "maxRange" = 0.15,
-        "menu_pos" = 16
+        "menu_pos" = 28
     })
     _config.set_value("Float", "cfg_speed_bonus", {
         "name" = "Speed Bonus Per Level",
         "tooltip" = "Movement speed increase per Athleticism level (fraction, e.g. 0.04 = 4%)",
         "default" = 0.04, "value" = 0.04,
         "minRange" = 0.01, "maxRange" = 0.10,
-        "menu_pos" = 17
+        "menu_pos" = 29
+    })
+    _config.set_value("Float", "cfg_scavenger_chance", {
+        "name" = "Scavenger Chance Per Level",
+        "tooltip" = "Chance to find extra loot per Scavenger level (fraction, e.g. 0.05 = 5%)",
+        "default" = 0.05, "value" = 0.05,
+        "minRange" = 0.01, "maxRange" = 0.15,
+        "menu_pos" = 30
     })
 
     if !FileAccess.file_exists(MCM_FILE_PATH + "/config.ini"):
@@ -225,25 +277,39 @@ func _register_mcm():
 
 func _on_mcm_save(config: ConfigFile):
     _apply_mcm_config(config)
+    var ui = Engine.get_meta("XPInterface", null)
+    if ui:
+        ui.RebuildSkills()
+
+func _mcm_val(config: ConfigFile, section: String, key: String, fallback):
+    var entry = config.get_value(section, key, null)
+    if entry == null or not entry is Dictionary:
+        return fallback
+    return entry.get("value", fallback)
 
 func _apply_mcm_config(config: ConfigFile):
-    cfg_xp_container = config.get_value("Int", "cfg_xp_container")["value"]
-    cfg_xp_kill = config.get_value("Int", "cfg_xp_kill")["value"]
-    cfg_xp_boss = config.get_value("Int", "cfg_xp_boss")["value"]
-    cfg_xp_trade = config.get_value("Int", "cfg_xp_trade")["value"]
-    cfg_xp_task = config.get_value("Int", "cfg_xp_task")["value"]
-    cfg_death_resets = config.get_value("Bool", "cfg_death_resets")["value"]
-    cfg_hp_per_level = config.get_value("Float", "cfg_hp_per_level")["value"]
-    cfg_stamina_reduce = config.get_value("Float", "cfg_stamina_reduce")["value"]
-    cfg_carry_per_level = config.get_value("Float", "cfg_carry_per_level")["value"]
-    cfg_hunger_reduce = config.get_value("Float", "cfg_hunger_reduce")["value"]
-    cfg_thirst_reduce = config.get_value("Float", "cfg_thirst_reduce")["value"]
-    cfg_mental_reduce = config.get_value("Float", "cfg_mental_reduce")["value"]
-    cfg_regen_per_level = config.get_value("Float", "cfg_regen_per_level")["value"]
-    cfg_coldres_reduce = config.get_value("Float", "cfg_coldres_reduce")["value"]
-    cfg_stealth_reduce = config.get_value("Float", "cfg_stealth_reduce")["value"]
-    cfg_recoil_reduce = config.get_value("Float", "cfg_recoil_reduce")["value"]
-    cfg_speed_bonus = config.get_value("Float", "cfg_speed_bonus")["value"]
+    for sid in skill_ids:
+        var key = "cfg_skill_" + sid
+        if config.has_section_key("Bool", key):
+            cfg_skill_enabled[sid] = _mcm_val(config, "Bool", key, cfg_skill_enabled.get(sid, true))
+    cfg_xp_container = _mcm_val(config, "Int", "cfg_xp_container", cfg_xp_container)
+    cfg_xp_kill = _mcm_val(config, "Int", "cfg_xp_kill", cfg_xp_kill)
+    cfg_xp_boss = _mcm_val(config, "Int", "cfg_xp_boss", cfg_xp_boss)
+    cfg_xp_trade = _mcm_val(config, "Int", "cfg_xp_trade", cfg_xp_trade)
+    cfg_xp_task = _mcm_val(config, "Int", "cfg_xp_task", cfg_xp_task)
+    cfg_death_resets = _mcm_val(config, "Bool", "cfg_death_resets", cfg_death_resets)
+    cfg_hp_per_level = _mcm_val(config, "Float", "cfg_hp_per_level", cfg_hp_per_level)
+    cfg_stamina_reduce = _mcm_val(config, "Float", "cfg_stamina_reduce", cfg_stamina_reduce)
+    cfg_carry_per_level = _mcm_val(config, "Float", "cfg_carry_per_level", cfg_carry_per_level)
+    cfg_hunger_reduce = _mcm_val(config, "Float", "cfg_hunger_reduce", cfg_hunger_reduce)
+    cfg_thirst_reduce = _mcm_val(config, "Float", "cfg_thirst_reduce", cfg_thirst_reduce)
+    cfg_mental_reduce = _mcm_val(config, "Float", "cfg_mental_reduce", cfg_mental_reduce)
+    cfg_regen_per_level = _mcm_val(config, "Float", "cfg_regen_per_level", cfg_regen_per_level)
+    cfg_coldres_reduce = _mcm_val(config, "Float", "cfg_coldres_reduce", cfg_coldres_reduce)
+    cfg_stealth_reduce = _mcm_val(config, "Float", "cfg_stealth_reduce", cfg_stealth_reduce)
+    cfg_recoil_reduce = _mcm_val(config, "Float", "cfg_recoil_reduce", cfg_recoil_reduce)
+    cfg_speed_bonus = _mcm_val(config, "Float", "cfg_speed_bonus", cfg_speed_bonus)
+    cfg_scavenger_chance = _mcm_val(config, "Float", "cfg_scavenger_chance", cfg_scavenger_chance)
 
 # --- Fallback config (used when MCM is not installed) ---
 
@@ -267,10 +333,13 @@ func LoadConfig():
         cfg_stealth_reduce = cfg.get_value("bonuses", "stealth_reduce", 0.05)
         cfg_recoil_reduce = cfg.get_value("bonuses", "recoil_reduce", 0.05)
         cfg_speed_bonus = cfg.get_value("bonuses", "speed_bonus", 0.04)
-        var ml = cfg.get_value("skills", "max_levels", "10,10,10,10,10,10,5,10,10,10,5")
-        var cb = cfg.get_value("skills", "cost_bases", "25,25,20,20,20,20,50,20,25,25,30")
-        cfg_max_levels = _parse_int_list(ml, [10, 10, 10, 10, 10, 10, 5, 10, 10, 10, 5])
-        cfg_cost_bases = _parse_int_list(cb, [25, 25, 20, 20, 20, 20, 50, 20, 25, 25, 30])
+        cfg_scavenger_chance = cfg.get_value("bonuses", "scavenger_chance", 0.05)
+        for sid in skill_ids:
+            cfg_skill_enabled[sid] = cfg.get_value("toggles", sid, true)
+        var ml = cfg.get_value("skills", "max_levels", "10,10,10,10,10,10,5,10,10,10,5,5")
+        var cb = cfg.get_value("skills", "cost_bases", "25,25,20,20,20,20,50,20,25,25,30,30")
+        cfg_max_levels = _parse_int_list(ml, [10, 10, 10, 10, 10, 10, 5, 10, 10, 10, 5, 5])
+        cfg_cost_bases = _parse_int_list(cb, [25, 25, 20, 20, 20, 20, 50, 20, 25, 25, 30, 30])
     else:
         SaveConfig()
 
@@ -293,6 +362,9 @@ func SaveConfig():
     cfg.set_value("bonuses", "stealth_reduce", cfg_stealth_reduce)
     cfg.set_value("bonuses", "recoil_reduce", cfg_recoil_reduce)
     cfg.set_value("bonuses", "speed_bonus", cfg_speed_bonus)
+    cfg.set_value("bonuses", "scavenger_chance", cfg_scavenger_chance)
+    for sid in skill_ids:
+        cfg.set_value("toggles", sid, cfg_skill_enabled[sid])
     var ml = ",".join(cfg_max_levels.map(func(v): return str(v)))
     var cb = ",".join(cfg_cost_bases.map(func(v): return str(v)))
     cfg.set_value("skills", "max_levels", ml)
@@ -323,6 +395,7 @@ func SaveXP():
     cfg.set_value("xp", "xpStealth", xpStealth)
     cfg.set_value("xp", "xpRecoil", xpRecoil)
     cfg.set_value("xp", "xpSpeed", xpSpeed)
+    cfg.set_value("xp", "xpScavenger", xpScavenger)
     cfg.save("user://XPData.cfg")
 
 func LoadXP():
@@ -341,6 +414,7 @@ func LoadXP():
         xpStealth = cfg.get_value("xp", "xpStealth", 0)
         xpRecoil = cfg.get_value("xp", "xpRecoil", 0)
         xpSpeed = cfg.get_value("xp", "xpSpeed", 0)
+        xpScavenger = cfg.get_value("xp", "xpScavenger", 0)
 
 func ResetXP():
     xp = 0
@@ -356,5 +430,6 @@ func ResetXP():
     xpStealth = 0
     xpRecoil = 0
     xpSpeed = 0
+    xpScavenger = 0
     if FileAccess.file_exists("user://XPData.cfg"):
         DirAccess.remove_absolute(ProjectSettings.globalize_path("user://XPData.cfg"))
