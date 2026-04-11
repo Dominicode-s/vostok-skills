@@ -1,5 +1,9 @@
 # XP & Skills System — Changelog
 
+### v1.5.0
+- Changed all MCM Float sliders to Int — values now shown as whole numbers (e.g. 8% instead of 0.08)
+- Existing MCM settings will reset to defaults on first launch
+
 ### v1.4.1
 - Fixed AI-on-AI kills (Faction Warfare) incorrectly awarding XP to the player
 - Added grenade kill attribution — grenade kills now properly award XP
