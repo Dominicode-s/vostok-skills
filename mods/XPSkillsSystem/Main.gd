@@ -105,6 +105,10 @@ func _process(_delta):
     _prev_grenade2 = g2
 
 func is_player_kill() -> bool:
+    # Check raw input first — isFiring has a timing issue where FireImpulse()
+    # runs AFTER Raycast→Death in the same _physics_process frame
+    if Input.is_action_pressed("fire"):
+        return true
     if gameData.isFiring:
         return true
     if last_grenade_time > 0 and (Time.get_ticks_msec() - last_grenade_time) <= GRENADE_WINDOW_MS:
