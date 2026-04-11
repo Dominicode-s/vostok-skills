@@ -2,6 +2,9 @@ extends Node
 
 var gameData = preload("res://Resources/GameData.tres")
 
+# New-game detection — marker file is wiped by FormatSave() on new game
+var _prev_menu: bool = false
+
 # Kill Attribution — grenade tracking
 const GRENADE_WINDOW_MS: int = 6000
 var last_grenade_time: int = 0
@@ -85,6 +88,14 @@ func _ready():
     overrideScript("res://mods/XPSkillsSystem/Controller.gd")
 
 func _process(_delta):
+    # Detect menu→game transition to check for new game
+    if _prev_menu and !gameData.menu:
+        if !FileAccess.file_exists("user://XPSkillsMarker.tres"):
+            ResetXP()
+            print("[XP Skills] New game detected — XP reset")
+        _ensure_marker()
+    _prev_menu = gameData.menu
+
     # Track grenade throws for kill attribution
     var g1 = gameData.grenade1 if "grenade1" in gameData else false
     var g2 = gameData.grenade2 if "grenade2" in gameData else false
@@ -427,6 +438,7 @@ func SaveXP():
     cfg.set_value("xp", "xpSpeed", xpSpeed)
     cfg.set_value("xp", "xpScavenger", xpScavenger)
     cfg.save("user://XPData.cfg")
+    _ensure_marker()
 
 func LoadXP():
     var cfg = ConfigFile.new()
@@ -463,3 +475,8 @@ func ResetXP():
     xpScavenger = 0
     if FileAccess.file_exists("user://XPData.cfg"):
         DirAccess.remove_absolute(ProjectSettings.globalize_path("user://XPData.cfg"))
+
+func _ensure_marker():
+    if !FileAccess.file_exists("user://XPSkillsMarker.tres"):
+        var marker = Resource.new()
+        ResourceSaver.save(marker, "user://XPSkillsMarker.tres")
