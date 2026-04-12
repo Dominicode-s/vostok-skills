@@ -1,5 +1,11 @@
 # XP & Skills System — Changelog
 
+### v1.6.0
+- Sync skill levels to gameData fields for mod compatibility — HP, stamina, carry weight, hunger, thirst, mental, and regen now work even if another mod overrides Character.gd
+- Fixed Recoil Control skill not applying — weapon rigs are preloaded so script override was too late; now modifies recoil data values directly when weapons are equipped
+- Removed Recoil.gd script override (replaced by data modification approach)
+- Added safety clamp on recoil multiplier to prevent inverted recoil at extreme config values
+
 ### v1.5.2
 - Fixed kills not awarding XP — `isFiring` timing race condition in game's physics frame
 - Kill detection now checks `Input.is_action_pressed("fire")` for reliable same-frame attribution
