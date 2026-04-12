@@ -49,14 +49,6 @@ func LoadDefaultTool(tool: int):
     super(tool)
     if skillsButton: skillsButton.set_pressed_no_signal(false)
 
-func _on_accept_pressed() -> void:
-    super()
-    var xp_mod = Engine.get_meta("XPMain", null)
-    if xp_mod:
-        xp_mod.xp += xp_mod.cfg_xp_trade
-        xp_mod.xpTotal += xp_mod.cfg_xp_trade
-        xp_mod.SaveXP()
-
 func UpdateStats(updateLabels: bool):
     await get_tree().physics_frame
 
