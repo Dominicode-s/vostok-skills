@@ -11,6 +11,9 @@ var last_grenade_time: int = 0
 var _prev_grenade1: bool = false
 var _prev_grenade2: bool = false
 
+# Recoil — weapon rigs are preloaded in Database.gd so take_over_path can't
+# replace the script. Instead we modify recoil data values when equipped.
+
 # XP State
 var xp: int = 0
 var xpTotal: int = 0
@@ -84,8 +87,10 @@ func _ready():
     overrideScript("res://mods/XPSkillsSystem/LootContainer.gd")
     overrideScript("res://mods/XPSkillsSystem/AI.gd")
     overrideScript("res://mods/XPSkillsSystem/Trader.gd")
-    overrideScript("res://mods/XPSkillsSystem/Recoil.gd")
     overrideScript("res://mods/XPSkillsSystem/Controller.gd")
+    # Weapon rigs are preloaded in Database.gd so take_over_path can't replace
+    # Recoil.gd on cached PackedScenes. Instead, modify recoil data on equip.
+    get_tree().node_added.connect(_on_node_added)
 
 func _process(_delta):
     # Detect menu→game transition to check for new game
@@ -131,6 +136,24 @@ func overrideScript(path: String):
         push_warning("XPSkillsSystem: No base script for " + path)
         return
     script.take_over_path(parent.resource_path)
+
+func _on_node_added(node: Node):
+    if node is Node3D and node.name == "Recoil" and node.has_method("ApplyRecoil"):
+        # Defer so _ready() runs first (sets data = owner.data)
+        _apply_recoil_reduction.call_deferred(node)
+
+func _apply_recoil_reduction(node: Node):
+    if !is_instance_valid(node) or !"data" in node or !node.data:
+        return
+    var level = get_level(9)
+    if level <= 0:
+        return
+    var mult = maxf(1.0 - (level * cfg_recoil_reduce), 0.05)
+    # Duplicate so we don't modify the shared weapon template resource
+    node.data = node.data.duplicate()
+    node.data.verticalRecoil *= mult
+    node.data.horizontalRecoil *= mult
+    node.data.kick *= mult
 
 func is_skill_enabled(index: int) -> bool:
     if index < 0 or index >= skill_ids.size():
