@@ -11,6 +11,9 @@ var last_grenade_time: int = 0
 var _prev_grenade1: bool = false
 var _prev_grenade2: bool = false
 
+# Recoil — weapon rigs are preloaded in Database.gd so take_over_path can't
+# replace the script. Instead we modify recoil data values when equipped.
+
 # XP State
 var xp: int = 0
 var xpTotal: int = 0
@@ -84,8 +87,10 @@ func _ready():
     overrideScript("res://mods/XPSkillsSystem/LootContainer.gd")
     overrideScript("res://mods/XPSkillsSystem/AI.gd")
     overrideScript("res://mods/XPSkillsSystem/Trader.gd")
-    overrideScript("res://mods/XPSkillsSystem/Recoil.gd")
     overrideScript("res://mods/XPSkillsSystem/Controller.gd")
+    # Weapon rigs are preloaded in Database.gd so take_over_path can't replace
+    # Recoil.gd on cached PackedScenes. Instead, modify recoil data on equip.
+    get_tree().node_added.connect(_on_node_added)
 
 func _process(_delta):
     # Detect menu→game transition to check for new game
@@ -95,6 +100,11 @@ func _process(_delta):
             print("[XP Skills] New game detected — XP reset")
         _ensure_marker()
     _prev_menu = gameData.menu
+
+    # Keep gameData fields in sync so base game code uses our levels
+    # even if another mod stomped our Character.gd override
+    if !gameData.menu:
+        _sync_to_gamedata()
 
     # Track grenade throws for kill attribution
     var g1 = gameData.grenade1 if "grenade1" in gameData else false
@@ -126,6 +136,24 @@ func overrideScript(path: String):
         push_warning("XPSkillsSystem: No base script for " + path)
         return
     script.take_over_path(parent.resource_path)
+
+func _on_node_added(node: Node):
+    if node is Node3D and node.name == "Recoil" and node.has_method("ApplyRecoil"):
+        # Defer so _ready() runs first (sets data = owner.data)
+        _apply_recoil_reduction.call_deferred(node)
+
+func _apply_recoil_reduction(node: Node):
+    if !is_instance_valid(node) or !"data" in node or !node.data:
+        return
+    var level = get_level(9)
+    if level <= 0:
+        return
+    var mult = maxf(1.0 - (level * cfg_recoil_reduce), 0.05)
+    # Duplicate so we don't modify the shared weapon template resource
+    node.data = node.data.duplicate()
+    node.data.verticalRecoil *= mult
+    node.data.horizontalRecoil *= mult
+    node.data.kick *= mult
 
 func is_skill_enabled(index: int) -> bool:
     if index < 0 or index >= skill_ids.size():
@@ -442,7 +470,23 @@ func SaveXP():
     cfg.set_value("xp", "xpSpeed", xpSpeed)
     cfg.set_value("xp", "xpScavenger", xpScavenger)
     cfg.save("user://XPData.cfg")
+    _sync_to_gamedata()
     _ensure_marker()
+
+func _sync_to_gamedata():
+    # Mirror our skill levels to the game's built-in XP fields so that even if
+    # another mod overrides Character.gd / Interface.gd (stomping our override),
+    # the base game code still picks up the correct values for HP cap, stamina,
+    # carry weight, hunger, thirst, mental, and regen.
+    gameData.xp = xp
+    gameData.xpTotal = xpTotal
+    gameData.xpHealth = get_level(0)
+    gameData.xpStamina = get_level(1)
+    gameData.xpCarry = get_level(2)
+    gameData.xpHunger = get_level(3)
+    gameData.xpThirst = get_level(4)
+    gameData.xpMental = get_level(5)
+    gameData.xpRegen = get_level(6)
 
 func LoadXP():
     var cfg = ConfigFile.new()
@@ -461,6 +505,7 @@ func LoadXP():
         xpRecoil = cfg.get_value("xp", "xpRecoil", 0)
         xpSpeed = cfg.get_value("xp", "xpSpeed", 0)
         xpScavenger = cfg.get_value("xp", "xpScavenger", 0)
+    _sync_to_gamedata()
 
 func ResetXP():
     xp = 0
@@ -479,6 +524,7 @@ func ResetXP():
     xpScavenger = 0
     if FileAccess.file_exists("user://XPData.cfg"):
         DirAccess.remove_absolute(ProjectSettings.globalize_path("user://XPData.cfg"))
+    _sync_to_gamedata()
 
 func _ensure_marker():
     if !FileAccess.file_exists("user://XPSkillsMarker.tres"):
