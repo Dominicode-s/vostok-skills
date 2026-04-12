@@ -1,5 +1,15 @@
 # XP & Skills System — Changelog
 
+### v2.0.0
+- **Major compatibility improvement** — removed 4 of 6 script overrides to eliminate conflicts with popular mods
+- Kill XP, search XP, trade XP, task XP, and speed bonus now use polling-based detection instead of `take_over_path`
+- Fixes conflicts with HellmAI, Faction Warfare, LootFloorFix, Trader Improvements, Weapons Spawn with Mag and Ammo, and other mods
+- Moved Scavenger loot system from LootContainer.gd to Main.gd
+- Removed trade XP hook from Interface.gd (now handled in Main.gd)
+- Deleted override files: AI.gd, LootContainer.gd, Trader.gd, Controller.gd
+- Remaining overrides: Character.gd (health/vitals) and Interface.gd (Skills UI)
+- Known limitation: Stealth skill (AI hearing reduction) cannot work without AI.gd override
+
 ### v1.6.0
 - Sync skill levels to gameData fields for mod compatibility — HP, stamina, carry weight, hunger, thirst, mental, and regen now work even if another mod overrides Character.gd
 - Fixed Recoil Control skill not applying — weapon rigs are preloaded so script override was too late; now modifies recoil data values directly when weapons are equipped
