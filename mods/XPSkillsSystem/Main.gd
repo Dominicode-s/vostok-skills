@@ -5,11 +5,36 @@ var gameData = preload("res://Resources/GameData.tres")
 # New-game detection — marker file is wiped by FormatSave() on new game
 var _prev_menu: bool = false
 
-# Kill Attribution — grenade tracking
+# Kill Attribution
 const GRENADE_WINDOW_MS: int = 6000
+const FIRE_WINDOW_MS: int = 500
 var last_grenade_time: int = 0
+var _last_fire_time: int = 0
 var _prev_grenade1: bool = false
 var _prev_grenade2: bool = false
+
+# Compat — AI death polling for kill XP (no AI.gd override needed)
+var _tracked_ai: Array = []
+
+# Compat — Container tracking for search XP (no LootContainer.gd override)
+var _awarded_containers: Dictionary = {}
+var _prev_interface: bool = false
+
+# Compat — Trade tracking (no Interface.gd trade hook needed)
+var _trade_btn: Button = null
+var _trade_connected: bool = false
+
+# Compat — Task tracking (no Trader.gd override needed)
+var _tracked_traders: Array = []
+
+# Compat — Speed bonus (no Controller.gd override needed)
+var _controller_ref = null
+const BASE_WALK_SPEED: float = 2.5
+const BASE_SPRINT_SPEED: float = 5.0
+
+# Scavenger SFX
+var _sfx_search: AudioStreamMP3
+var _sfx_door: AudioStreamMP3
 
 # Recoil — weapon rigs are preloaded in Database.gd so take_over_path can't
 # replace the script. Instead we modify recoil data values when equipped.
@@ -82,17 +107,15 @@ func _ready():
     else:
         LoadConfig()
     LoadXP()
-    overrideScript("res://mods/XPSkillsSystem/Character.gd")
+    # Only Interface.gd and Character.gd overrides are kept.
+    # Interface.gd: Skills UI tab, carry weight, button integration.
+    # Character.gd: Health bonus (max HP), regen, vitals drain reduction, death reset.
+    # All other overrides replaced with compat polling in _process().
     overrideScript("res://mods/XPSkillsSystem/Interface.gd")
-    overrideScript("res://mods/XPSkillsSystem/LootContainer.gd")
-    overrideScript("res://mods/XPSkillsSystem/AI.gd")
-    overrideScript("res://mods/XPSkillsSystem/Trader.gd")
-    overrideScript("res://mods/XPSkillsSystem/Controller.gd")
-    # Weapon rigs are preloaded in Database.gd so take_over_path can't replace
-    # Recoil.gd on cached PackedScenes. Instead, modify recoil data on equip.
+    overrideScript("res://mods/XPSkillsSystem/Character.gd")
     get_tree().node_added.connect(_on_node_added)
 
-func _process(_delta):
+func _process(delta):
     # Detect menu→game transition to check for new game
     if _prev_menu and !gameData.menu:
         if !FileAccess.file_exists("user://XPSkillsMarker.tres"):
@@ -114,12 +137,46 @@ func _process(_delta):
     _prev_grenade1 = g1
     _prev_grenade2 = g2
 
+    # Track fire input for kill attribution (semi-auto fire window)
+    if Input.is_action_pressed("fire") or ("isFiring" in gameData and gameData.isFiring):
+        _last_fire_time = Time.get_ticks_msec()
+
+    # Track state transitions (must update before early returns)
+    var _interface_just_opened = gameData.interface and !_prev_interface
+    _prev_interface = gameData.interface
+
+    if gameData.menu or gameData.shelter:
+        return
+
+    # --- Compat XP tracking (replaces script overrides) ---
+
+    # Kill XP — poll tracked AI nodes for death
+    _track_kills()
+
+    # Container XP — detect container open via interface state
+    if _interface_just_opened and !gameData.isTrading:
+        _check_container_xp.call_deferred()
+
+    # Trade XP — connect to Accept button when trading
+    if gameData.isTrading and !_trade_connected:
+        _connect_trade_button()
+
+    # Task XP — monitor trader task completions
+    _track_tasks()
+
+    # Speed bonus — set Controller walk/sprint speeds
+    _apply_speed_bonus()
+
+    # Cold resistance — compensate base game temperature drain
+    _apply_cold_resistance(delta)
+
 func is_player_kill() -> bool:
-    # Check raw input first — isFiring has a timing issue where FireImpulse()
-    # runs AFTER Raycast→Death in the same _physics_process frame
     if Input.is_action_pressed("fire"):
         return true
     if gameData.isFiring:
+        return true
+    # Semi-auto fire window — button may be released before death is detected
+    if _last_fire_time > 0 and (Time.get_ticks_msec() - _last_fire_time) <= FIRE_WINDOW_MS:
         return true
     if last_grenade_time > 0 and (Time.get_ticks_msec() - last_grenade_time) <= GRENADE_WINDOW_MS:
         return true
@@ -138,9 +195,21 @@ func overrideScript(path: String):
     script.take_over_path(parent.resource_path)
 
 func _on_node_added(node: Node):
+    # Recoil reduction on weapon equip
     if node is Node3D and node.name == "Recoil" and node.has_method("ApplyRecoil"):
-        # Defer so _ready() runs first (sets data = owner.data)
         _apply_recoil_reduction.call_deferred(node)
+        return
+
+    # AI tracking for kill XP
+    if "dead" in node and "boss" in node and node.has_method("Death"):
+        if node not in _tracked_ai:
+            _tracked_ai.append(node)
+        return
+
+    # Trader tracking for task XP
+    if "tasksCompleted" in node and "traderData" in node:
+        _tracked_traders.append({"ref": weakref(node), "count": node.tasksCompleted.size()})
+        return
 
 func _apply_recoil_reduction(node: Node):
     if !is_instance_valid(node) or !"data" in node or !node.data:
@@ -159,6 +228,236 @@ func is_skill_enabled(index: int) -> bool:
     if index < 0 or index >= skill_ids.size():
         return false
     return cfg_skill_enabled.get(skill_ids[index], true)
+
+# --- Compat: Kill XP (replaces AI.gd override) ---
+
+func _track_kills():
+    var still_alive: Array = []
+    for ai in _tracked_ai:
+        if !is_instance_valid(ai):
+            continue
+        if ai.dead:
+            if is_player_kill():
+                var xpReward = cfg_xp_boss if ai.boss else cfg_xp_kill
+                xp += xpReward
+                xpTotal += xpReward
+                SaveXP()
+        else:
+            still_alive.append(ai)
+    _tracked_ai = still_alive
+
+# --- Compat: Container/Search XP (replaces LootContainer.gd override) ---
+
+func _check_container_xp():
+    var ui = get_tree().current_scene.get_node_or_null("/root/Map/Core/UI")
+    if !ui:
+        return
+    var iface = ui.get_node_or_null("Interface")
+    if !iface or !"container" in iface or !iface.container:
+        return
+    var cid = iface.container.get_instance_id()
+    if cid in _awarded_containers:
+        return
+    _awarded_containers[cid] = true
+    xp += cfg_xp_container
+    xpTotal += cfg_xp_container
+    SaveXP()
+    # Scavenger skill — bonus loot from containers
+    if get_level(11) > 0:
+        get_tree().create_timer(0.1).timeout.connect(_try_scavenge.bind(iface, ui))
+
+func _try_scavenge(iface, ui_manager):
+    var chance = get_level(11) * cfg_scavenger_chance
+    if randf() >= chance:
+        return
+    if iface == null or !is_instance_valid(iface):
+        return
+    if !"containerGrid" in iface or iface.containerGrid == null:
+        return
+    if !"container" in iface or !iface.container:
+        return
+    var level = get_level(11)
+    var roll = randf()
+    var bonus_item = _try_loot_pool_spawn(level, roll, iface)
+    if bonus_item:
+        _show_scavenge_notify(ui_manager, bonus_item)
+        return
+    # Fallback: duplicate an existing container item
+    var items = []
+    for child in iface.containerGrid.get_children():
+        if "slotData" in child:
+            items.append(child)
+    if items.is_empty():
+        return
+    var source_item = items[randi() % items.size()]
+    var item_name = str(source_item.slotData.itemData.name) if source_item.slotData else "Item"
+    var dupe_data = source_item.slotData.duplicate()
+    if dupe_data.itemData.stackable:
+        dupe_data.amount = 1
+    if iface.AutoStack(dupe_data, iface.containerGrid) or iface.Create(dupe_data, iface.containerGrid, true):
+        _show_scavenge_notify(ui_manager, item_name)
+
+func _try_loot_pool_spawn(level: int, roll: float, iface) -> String:
+    if level <= 2:
+        return ""
+    # Access loot buckets from the current container
+    var container = iface.container if "container" in iface else null
+    if !container:
+        return ""
+    var commonBucket = container.commonBucket if "commonBucket" in container else []
+    var rareBucket = container.rareBucket if "rareBucket" in container else []
+    var legendaryBucket = container.legendaryBucket if "legendaryBucket" in container else []
+    var bucket: Array = []
+    if level == 3:
+        if roll < 0.30 and commonBucket.size() > 0:
+            bucket = commonBucket
+    elif level == 4:
+        if roll < 0.20 and rareBucket.size() > 0:
+            bucket = rareBucket
+        elif roll < 0.50 and commonBucket.size() > 0:
+            bucket = commonBucket
+    elif level >= 5:
+        if roll < 0.10 and legendaryBucket.size() > 0:
+            bucket = legendaryBucket
+        elif roll < 0.35 and rareBucket.size() > 0:
+            bucket = rareBucket
+        elif roll < 0.60 and commonBucket.size() > 0:
+            bucket = commonBucket
+    if bucket.is_empty():
+        return ""
+    var item_data = bucket.pick_random()
+    var new_slot = SlotData.new()
+    new_slot.itemData = item_data
+    if item_data.defaultAmount != 0:
+        new_slot.amount = randi_range(1, item_data.defaultAmount)
+    if item_data.type == "Weapon" or item_data.subtype == "Light" or item_data.subtype == "NVG":
+        new_slot.condition = randi_range(25, 100)
+    if iface.AutoStack(new_slot, iface.containerGrid) or iface.Create(new_slot, iface.containerGrid, true):
+        return item_data.name
+    return ""
+
+func _load_scavenge_sfx():
+    if _sfx_search:
+        return
+    var base = "res://mods/XPSkillsSystem/sounds"
+    var f = FileAccess.open(base + "/search.mp3", FileAccess.READ)
+    if f:
+        _sfx_search = AudioStreamMP3.new()
+        _sfx_search.data = f.get_buffer(f.get_length())
+        f.close()
+    f = FileAccess.open(base + "/door.mp3", FileAccess.READ)
+    if f:
+        _sfx_door = AudioStreamMP3.new()
+        _sfx_door.data = f.get_buffer(f.get_length())
+        f.close()
+
+func _show_scavenge_notify(ui_manager, item_name: String):
+    _load_scavenge_sfx()
+    var sfx = _sfx_search
+    if _sfx_door and randf() < 0.002:
+        sfx = _sfx_door
+    if sfx:
+        var player = AudioStreamPlayer.new()
+        player.stream = sfx
+        player.volume_db = 0.0
+        get_tree().root.add_child(player)
+        player.play()
+        player.finished.connect(player.queue_free)
+    var label = Label.new()
+    label.text = "⭐ Scavenger: +1 " + item_name
+    label.add_theme_font_size_override("font_size", 16)
+    label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2))
+    label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    label.anchors_preset = Control.PRESET_CENTER_TOP
+    label.offset_top = 60
+    label.z_index = 100
+    ui_manager.add_child(label)
+    var tween = label.create_tween()
+    tween.tween_property(label, "modulate:a", 0.0, 1.5).set_delay(1.0)
+    tween.tween_callback(label.queue_free)
+
+# --- Compat: Trade XP (replaces Interface.gd trade hook) ---
+
+func _connect_trade_button():
+    var ui = get_tree().current_scene.get_node_or_null("/root/Map/Core/UI")
+    if !ui:
+        return
+    var iface = ui.get_node_or_null("Interface")
+    if !iface:
+        return
+    var btn = iface.get_node_or_null("Deal/Panel/Buttons/Accept")
+    if btn and btn is Button:
+        if !btn.pressed.is_connected(_on_trade_accept):
+            btn.pressed.connect(_on_trade_accept)
+        _trade_btn = btn
+        _trade_connected = true
+
+func _on_trade_accept():
+    xp += cfg_xp_trade
+    xpTotal += cfg_xp_trade
+    SaveXP()
+
+# --- Compat: Task XP (replaces Trader.gd override) ---
+
+func _track_tasks():
+    var still_valid: Array = []
+    for entry in _tracked_traders:
+        var trader = entry.ref.get_ref()
+        if !trader or !is_instance_valid(trader):
+            continue
+        var current_count = trader.tasksCompleted.size()
+        if current_count > entry.count:
+            var completed = current_count - entry.count
+            xp += cfg_xp_task * completed
+            xpTotal += cfg_xp_task * completed
+            SaveXP()
+            entry.count = current_count
+        still_valid.append(entry)
+    _tracked_traders = still_valid
+
+# --- Compat: Speed bonus (replaces Controller.gd override) ---
+
+func _apply_speed_bonus():
+    var level = get_level(10)
+    if level <= 0:
+        return
+    if _controller_ref and is_instance_valid(_controller_ref):
+        var bonus = 1.0 + (level * cfg_speed_bonus)
+        _controller_ref.sprintSpeed = BASE_SPRINT_SPEED * bonus
+        _controller_ref.walkSpeed = BASE_WALK_SPEED * bonus
+        return
+    # Lazily find Controller node
+    var ctrl = get_tree().current_scene.get_node_or_null("/root/Map/Core/Controller")
+    if ctrl and "sprintSpeed" in ctrl and "walkSpeed" in ctrl:
+        _controller_ref = ctrl
+        var bonus = 1.0 + (level * cfg_speed_bonus)
+        ctrl.sprintSpeed = BASE_SPRINT_SPEED * bonus
+        ctrl.walkSpeed = BASE_WALK_SPEED * bonus
+
+# --- Compat: Cold resistance (replaces Character.gd Temperature override) ---
+
+func _apply_cold_resistance(delta):
+    var level = get_level(7)
+    if level <= 0:
+        return
+    # Base game doesn't have cold resistance — compensate by adding back
+    # the portion of temperature drain that our skill should prevent.
+    # Base drain: (delta * rate) * insulation. We add back: drain * (level * cfg_coldres_reduce)
+    if "season" in gameData and gameData.season == 2 and !gameData.shelter and !gameData.heat:
+        if "frostbite" in gameData and !gameData.frostbite:
+            var character = get_tree().current_scene.get_node_or_null("/root/Map/Core/Controller/Character")
+            var ins = character.insulation if character and "insulation" in character else 1.0
+            var base_drain = 0.0
+            if "isSubmerged" in gameData and gameData.isSubmerged:
+                base_drain = (delta * 8.0) * ins
+            elif "isWater" in gameData and gameData.isWater:
+                base_drain = (delta * 4.0) * ins
+            elif "indoor" in gameData and gameData.indoor:
+                base_drain = (delta / 10.0) * ins
+            else:
+                base_drain = (delta / 5.0) * ins
+            var reduction = base_drain * (level * cfg_coldres_reduce)
+            gameData.temperature += reduction
 
 func get_level(index: int) -> int:
     if not is_skill_enabled(index):
