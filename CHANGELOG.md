@@ -1,5 +1,18 @@
 # XP & Skills System — Changelog
 
+### v2.1.0
+- **Compatibility with Patty's Profiles** — XP/skill state is now saved per-profile at `user://XPData_<profile>.cfg`. Each profile keeps its own progression, death reset only affects the active profile, and switching profiles in the menu reloads the correct state on next game start. First-time Patty install automatically migrates existing `XPData.cfg` into the active profile
+- **Container Search XP now supports fractional values** (0.1–5.0 in 0.1 steps) — the MCM slider has been moved to a Float control, and partial XP accumulates across containers (e.g. 0.3 per container awards 1 XP every ~4 containers searched). Progress persists across sessions
+- **Fixed trader task XP being re-awarded on every visit** — `Loader.LoadTrader()` clears and repopulates `tasksCompleted` on interaction, which looked like a delta to our poll. Per-trader completion counts are now persisted in `XPData.cfg`, seeded from `user://Traders.tres` on each menu→game transition (so existing progression is never miscounted), and only genuine new completions award XP
+- **Fixed crash on zone transition when Athleticism is leveled** — speed bonus no longer writes to Controller during scene teardown (`isTransitioning`/`isCaching`), and now captures the real base walk/sprint speeds on first contact instead of hardcoded values, so it composes with mods that modify movement speed
+- **Fixed missing kill XP with HellmAI** — kill detection now uses a 3-second pending-kill grace window, so physics/process frame timing mismatches and HellmAI's heavier death pipeline no longer drop kills. Fire window extended from 500ms to 2000ms. Detection broadened to track any AI class exposing `dead` + `Death()` (no longer requires `boss`)
+- **Fixed boot crash with MCM + certain autoload orders** — script overrides are now installed via `call_deferred`, so other autoloads finish their own `_ready` before we reload and take over the base Interface/Character scripts
+- **Fixed boot crash caused by stale pre-v2.0 marker file** — `XPSkillsMarker.tres` is now force-rewritten on load with a clean `Resource`, so old markers that referenced deleted override scripts can no longer fail to load
+- Fixed missing frostbite damage in Character.gd override — the base game's `-delta/10` frostbite HP bleed was omitted, so frostbite was cosmetic while this mod was active
+- Fixed cold resistance being double-applied (both the Character.gd override and a Main.gd compensator were running)
+- Fixed null dereference in Scavenger loot duplication when a source item had partially-populated `slotData`
+- Fixed unbounded growth of the awarded-containers cache — all per-session tracking state is now cleared when returning to the main menu
+
 ### v2.0.0
 - **Major compatibility improvement** — removed 4 of 6 script overrides to eliminate conflicts with popular mods
 - Kill XP, search XP, trade XP, task XP, and speed bonus now use polling-based detection instead of `take_over_path`

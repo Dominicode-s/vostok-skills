@@ -15,6 +15,9 @@ func Health(delta):
     if gameData.insanity && !gameData.isDead:
         gameData.health -= delta / 10
 
+    if gameData.frostbite && !gameData.isDead:
+        gameData.health -= delta / 10
+
     if gameData.bleeding && !gameData.isDead:
         gameData.health -= delta / 5
 
