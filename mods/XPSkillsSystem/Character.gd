@@ -33,11 +33,15 @@ func Health(delta):
     if gameData.headshot && !gameData.isDead:
         gameData.health -= delta
 
-    # XP: Passive health regen
-    if xp_mod and xp_mod.get_level(6) > 0 and !gameData.isDead and gameData.health > 0:
-        var maxHP = 100.0 + xp_mod.get_level(0) * xp_mod.cfg_hp_per_level
-        if gameData.health < maxHP:
-            gameData.health += delta * xp_mod.get_level(6) * xp_mod.cfg_regen_per_level
+    # XP: Passive health regen. Prestige bonuses add to both max HP and the
+    # per-second regen rate on top of skill-tree bonuses, so a player with
+    # Regen skill 0 but Regen prestige 2 still gets a slow trickle.
+    if xp_mod and !gameData.isDead and gameData.health > 0:
+        var regen_rate = xp_mod.get_level(6) * xp_mod.cfg_regen_per_level + xp_mod.prestige_regen_bonus()
+        if regen_rate > 0.0:
+            var maxHP = 100.0 + xp_mod.get_level(0) * xp_mod.cfg_hp_per_level + xp_mod.prestige_hp_bonus()
+            if gameData.health < maxHP:
+                gameData.health += delta * regen_rate
 
     if gameData.health <= 0 && !gameData.isDead && !gameData.decor:
         Death()
@@ -45,7 +49,8 @@ func Health(delta):
 func Energy(delta):
     if !gameData.starvation:
         var hungerMult = 1.0
-        if xp_mod: hungerMult = 1.0 - (xp_mod.get_level(3) * xp_mod.cfg_hunger_reduce)
+        if xp_mod:
+            hungerMult = 1.0 - (xp_mod.get_level(3) * xp_mod.cfg_hunger_reduce) - xp_mod.prestige_hunger_bonus()
         gameData.energy -= (delta / 30.0) * hungerMult
 
     if gameData.energy <= 0 && !gameData.starvation:
@@ -56,7 +61,8 @@ func Energy(delta):
 func Hydration(delta):
     if !gameData.dehydration:
         var thirstMult = 1.0
-        if xp_mod: thirstMult = 1.0 - (xp_mod.get_level(4) * xp_mod.cfg_thirst_reduce)
+        if xp_mod:
+            thirstMult = 1.0 - (xp_mod.get_level(4) * xp_mod.cfg_thirst_reduce) - xp_mod.prestige_thirst_bonus()
         gameData.hydration -= (delta / 20.0) * thirstMult
 
     if gameData.hydration <= 0 && !gameData.dehydration:
@@ -70,7 +76,8 @@ func Mental(delta):
 
     elif !gameData.insanity:
         var mentalMult = 1.0
-        if xp_mod: mentalMult = 1.0 - (xp_mod.get_level(5) * xp_mod.cfg_mental_reduce)
+        if xp_mod:
+            mentalMult = 1.0 - (xp_mod.get_level(5) * xp_mod.cfg_mental_reduce) - xp_mod.prestige_mental_bonus()
         if (gameData.overweight
         || gameData.dehydration
         || gameData.starvation
@@ -92,7 +99,8 @@ func Mental(delta):
 
 func Stamina(delta):
     var staminaMult = 1.0
-    if xp_mod: staminaMult = 1.0 - (xp_mod.get_level(1) * xp_mod.cfg_stamina_reduce)
+    if xp_mod:
+        staminaMult = 1.0 - (xp_mod.get_level(1) * xp_mod.cfg_stamina_reduce) - xp_mod.prestige_stamina_bonus()
 
     if gameData.bodyStamina > 0 && (gameData.isRunning || gameData.overweight || (gameData.isSwimming && gameData.isMoving)):
         if gameData.overweight || gameData.starvation || gameData.dehydration:
@@ -120,7 +128,8 @@ func Stamina(delta):
 
 func Clamp():
     var maxHP = 100.0
-    if xp_mod: maxHP += xp_mod.get_level(0) * xp_mod.cfg_hp_per_level
+    if xp_mod:
+        maxHP += xp_mod.get_level(0) * xp_mod.cfg_hp_per_level + xp_mod.prestige_hp_bonus()
     gameData.health = clampf(gameData.health, 0, maxHP)
     gameData.energy = clampf(gameData.energy, 0, 100)
     gameData.hydration = clampf(gameData.hydration, 0, 100)
@@ -141,7 +150,8 @@ func Temperature(delta):
         gameData.temperature += delta
     elif gameData.season == 2:
         var coldMult = 1.0
-        if xp_mod: coldMult = 1.0 - (xp_mod.get_level(7) * xp_mod.cfg_coldres_reduce)
+        if xp_mod:
+            coldMult = 1.0 - (xp_mod.get_level(7) * xp_mod.cfg_coldres_reduce) - xp_mod.prestige_coldres_bonus()
 
         if !gameData.frostbite:
             if gameData.isSubmerged:

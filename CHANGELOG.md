@@ -1,5 +1,13 @@
 # XP & Skills System — Changelog
 
+### v2.2.0
+- **Added: Prestige system** — once every enabled skill is at its max level, a new Prestige button appears at the bottom of the Skills panel. Clicking it opens a picker modal where you choose one stat; confirming wipes all XP and skill levels in exchange for a permanent rank in that stat that stacks additively on top of the regular skill tree.
+- Prestige bonuses are separate from skill levels: they don't get baked into your skill count, they're a permanent baseline that everything else builds on top of. A Vitality prestige rank 3 character with Vitality skill level 10 gets +15 HP from skill (10 × 5) + 9 HP from prestige (3 × 3) = +24 HP on top of the 100 base.
+- **Vitality (max HP) is uncapped** — keep prestiging it as much as you want. Every other skill caps at 10 prestige ranks by default to keep late-game balance sane.
+- Stored separately at `user://XPPrestige_<profile>.cfg` so death reset and ResetXP don't touch prestige. Profile-aware (follows Patty's Profiles just like XPData does). Works across map/shelter transitions.
+- Each skill row now shows a **✦N** badge next to its level when that skill has prestige ranks.
+- New MCM options: enable/disable prestige, per-stat bonus magnitudes, shared cap for non-Vitality skills, and a hardcore "Reset Prestige on Death" toggle.
+
 ### v2.1.0
 - **Compatibility with Patty's Profiles** — XP/skill state is now saved per-profile at `user://XPData_<profile>.cfg`. Each profile keeps its own progression, death reset only affects the active profile, and switching profiles in the menu reloads the correct state on next game start. First-time Patty install automatically migrates existing `XPData.cfg` into the active profile
 - **Container Search XP now supports fractional values** (0.1–5.0 in 0.1 steps) — the MCM slider has been moved to a Float control, and partial XP accumulates across containers (e.g. 0.3 per container awards 1 XP every ~4 containers searched). Progress persists across sessions
