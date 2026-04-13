@@ -226,7 +226,15 @@ func _process(delta):
             LoadXP()
         if !FileAccess.file_exists("user://XPSkillsMarker.tres"):
             ResetXP()
-            print("[XP Skills] New game detected — XP reset")
+            # New game wipes prestige too. ResetXP alone only wipes prestige
+            # when the hardcore "reset on death" toggle is on, because it
+            # also runs on regular death. New game is unambiguous so we
+            # always clear prestige here regardless of that toggle.
+            prestige_counts.clear()
+            var pp = _get_prestige_path()
+            if FileAccess.file_exists(pp):
+                DirAccess.remove_absolute(ProjectSettings.globalize_path(pp))
+            print("[XP Skills] New game detected — XP and prestige reset")
         _ensure_marker()
         # Seed trader baselines from the authoritative save file. Must happen
         # after LoadXP (so profile-switched counts are respected) and after

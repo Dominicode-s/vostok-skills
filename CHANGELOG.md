@@ -1,5 +1,8 @@
 # XP & Skills System — Changelog
 
+### v2.2.1
+- Fixed prestige ranks persisting into a new game. The new-game detection path (marker file wiped by FormatSave) was only calling ResetXP, which preserves prestige by design so it survives regular death. New game is unambiguous so it now also clears prestige_counts and deletes the XPPrestige file regardless of the "Reset Prestige on Death" toggle.
+
 ### v2.2.0
 - **Added: Prestige system** — once every enabled skill is at its max level, a new Prestige button appears at the bottom of the Skills panel. Clicking it opens a picker modal where you choose one stat; confirming wipes all XP and skill levels in exchange for a permanent rank in that stat that stacks additively on top of the regular skill tree.
 - Prestige bonuses are separate from skill levels: they don't get baked into your skill count, they're a permanent baseline that everything else builds on top of. A Vitality prestige rank 3 character with Vitality skill level 10 gets +15 HP from skill (10 × 5) + 9 HP from prestige (3 × 3) = +24 HP on top of the 100 base.
