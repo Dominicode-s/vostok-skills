@@ -7,7 +7,8 @@ var _prev_menu: bool = false
 
 # Kill Attribution
 const GRENADE_WINDOW_MS: int = 6000
-const FIRE_WINDOW_MS: int = 500
+const FIRE_WINDOW_MS: int = 2000
+const KILL_GRACE_MS: int = 3000
 var last_grenade_time: int = 0
 var _last_fire_time: int = 0
 var _prev_grenade1: bool = false
@@ -15,6 +16,7 @@ var _prev_grenade2: bool = false
 
 # Compat — AI death polling for kill XP (no AI.gd override needed)
 var _tracked_ai: Array = []
+var _pending_kills: Array = []
 
 # Compat — Container tracking for search XP (no LootContainer.gd override)
 var _awarded_containers: Dictionary = {}
@@ -25,12 +27,24 @@ var _trade_btn: Button = null
 var _trade_connected: bool = false
 
 # Compat — Task tracking (no Trader.gd override needed)
+# Persisted per-trader completed-task counts, keyed by traderData.name.
+# Loader.LoadTrader() clears + repopulates tasksCompleted on interaction,
+# so an in-memory baseline would treat every re-populate as fresh completions.
 var _tracked_traders: Array = []
+var cfg_trader_task_counts: Dictionary = {}
+
+# Compat — Patty's Profiles: records the XPData path we last loaded. When
+# _get_xp_data_path() starts returning a different path, we reload state.
+# Stays as the legacy path when Patty isn't installed, so the comparison
+# never fires and the compat layer is fully dormant.
+var _last_xp_path: String = ""
 
 # Compat — Speed bonus (no Controller.gd override needed)
-var _controller_ref = null
-const BASE_WALK_SPEED: float = 2.5
-const BASE_SPRINT_SPEED: float = 5.0
+# Base speeds are captured on first Controller contact so we amplify whatever
+# the game (or another mod) set as the real base, rather than hardcoded guesses.
+var _controller_ref: Node = null
+var _controller_base_walk: float = 2.5
+var _controller_base_sprint: float = 5.0
 
 # Scavenger SFX
 var _sfx_search: AudioStreamMP3
@@ -56,11 +70,15 @@ var xpSpeed: int = 0
 var xpScavenger: int = 0
 
 # Config — XP rewards
-var cfg_xp_container: int = 1
+var cfg_xp_container: float = 1.0
 var cfg_xp_kill: int = 25
 var cfg_xp_boss: int = 100
 var cfg_xp_trade: int = 10
 var cfg_xp_task: int = 50
+
+# Container XP fraction accumulator — persists progress when the per-search
+# reward is fractional (e.g. 0.3), so every ~3–4 containers grants 1 XP.
+var _container_xp_fraction: float = 0.0
 
 # Config — Death behavior
 var cfg_death_resets: bool = true
@@ -101,27 +119,90 @@ const MCM_MOD_ID = "XPSkillsSystem"
 
 func _ready():
     Engine.set_meta("XPMain", self)
+    # Rewrite any pre-v2.0 marker with a clean Resource. Older versions may
+    # have saved a custom resource referencing override scripts that v2.0+
+    # deleted, which caused script-load crashes on boot.
+    _migrate_marker_file()
     _mcm_helpers = _try_load_mcm()
     if _mcm_helpers:
         _register_mcm()
     else:
         LoadConfig()
     LoadXP()
+    # Install script overrides on the next frame so every other autoload has
+    # finished its own _ready first. Calling reload()/take_over_path() inline
+    # during autoload init can race with mods that already resolved the base
+    # script (MCM in particular).
+    call_deferred("_install_overrides")
+    get_tree().node_added.connect(_on_node_added)
+
+func _install_overrides():
     # Only Interface.gd and Character.gd overrides are kept.
     # Interface.gd: Skills UI tab, carry weight, button integration.
     # Character.gd: Health bonus (max HP), regen, vitals drain reduction, death reset.
     # All other overrides replaced with compat polling in _process().
     overrideScript("res://mods/XPSkillsSystem/Interface.gd")
     overrideScript("res://mods/XPSkillsSystem/Character.gd")
-    get_tree().node_added.connect(_on_node_added)
+
+func _migrate_marker_file():
+    if FileAccess.file_exists("user://XPSkillsMarker.tres"):
+        var marker = Resource.new()
+        ResourceSaver.save(marker, "user://XPSkillsMarker.tres")
+
+# --- Patty's Profiles compat ---
+# Patty stores per-profile copies of .tres files in user://profiles/<name>/,
+# but .cfg files are shared across profiles. We key XPData.cfg by profile so
+# each profile gets its own XP/skill state. With no Patty installed, falls
+# back to user://XPData.cfg.
+
+func _get_active_profile() -> String:
+    if !FileAccess.file_exists("user://profiles/active_profile.cfg"):
+        return ""
+    var cfg = ConfigFile.new()
+    if cfg.load("user://profiles/active_profile.cfg") != OK:
+        return ""
+    return str(cfg.get_value("profiles", "active", ""))
+
+func _get_xp_data_path() -> String:
+    var profile = _get_active_profile()
+    if profile.is_empty():
+        return "user://XPData.cfg"
+    return "user://XPData_" + profile + ".cfg"
+
+func _copy_file_bytes(src: String, dst: String):
+    var f_in = FileAccess.open(src, FileAccess.READ)
+    if !f_in:
+        return
+    var data = f_in.get_buffer(f_in.get_length())
+    f_in.close()
+    var f_out = FileAccess.open(dst, FileAccess.WRITE)
+    if !f_out:
+        return
+    f_out.store_buffer(data)
+    f_out.close()
 
 func _process(delta):
     # Detect menu→game transition to check for new game
     if _prev_menu and !gameData.menu:
+        # Patty Profiles compat: if the active profile changed while the
+        # player was in the menu, reload state from the new profile's file.
+        # Zero cost without Patty — the path never changes so this is a
+        # single string compare.
+        if _get_xp_data_path() != _last_xp_path:
+            LoadXP()
         if !FileAccess.file_exists("user://XPSkillsMarker.tres"):
             ResetXP()
             print("[XP Skills] New game detected — XP reset")
         _ensure_marker()
+        # Seed trader baselines from the authoritative save file. Must happen
+        # after LoadXP (so profile-switched counts are respected) and after
+        # ResetXP (so new games start with zero baselines rather than stale
+        # ones). No-ops for traders already present in cfg_trader_task_counts.
+        _sync_trader_baselines_from_save()
+    # Detect game→menu transition: drop all per-session caches so a new run
+    # starts with a clean slate (fixes stale node refs and container leak).
+    if !_prev_menu and gameData.menu:
+        _reset_session_state()
     _prev_menu = gameData.menu
 
     # Keep gameData fields in sync so base game code uses our levels
@@ -167,8 +248,8 @@ func _process(delta):
     # Speed bonus — set Controller walk/sprint speeds
     _apply_speed_bonus()
 
-    # Cold resistance — compensate base game temperature drain
-    _apply_cold_resistance(delta)
+    # Cold resistance is applied inside Character.gd Temperature() override.
+    # No Main.gd compensation needed — running both was double-applying it.
 
 func is_player_kill() -> bool:
     if Input.is_action_pressed("fire"):
@@ -200,15 +281,18 @@ func _on_node_added(node: Node):
         _apply_recoil_reduction.call_deferred(node)
         return
 
-    # AI tracking for kill XP
-    if "dead" in node and "boss" in node and node.has_method("Death"):
+    # AI tracking for kill XP — broadened detection for modded AI classes
+    # that may not declare `boss` (e.g. custom factions).
+    if "dead" in node and node.has_method("Death"):
         if node not in _tracked_ai:
             _tracked_ai.append(node)
         return
 
-    # Trader tracking for task XP
+    # Trader tracking for task XP. We don't capture a baseline here because
+    # tasksCompleted isn't yet populated — LoadTrader() fills it on interaction.
+    # The real baseline lives in cfg_trader_task_counts (persisted in XPData.cfg).
     if "tasksCompleted" in node and "traderData" in node:
-        _tracked_traders.append({"ref": weakref(node), "count": node.tasksCompleted.size()})
+        _tracked_traders.append(weakref(node))
         return
 
 func _apply_recoil_reduction(node: Node):
@@ -232,19 +316,37 @@ func is_skill_enabled(index: int) -> bool:
 # --- Compat: Kill XP (replaces AI.gd override) ---
 
 func _track_kills():
+    # Step 1: drain freshly-dead AI into the pending bucket, keep the living.
+    var now = Time.get_ticks_msec()
     var still_alive: Array = []
     for ai in _tracked_ai:
         if !is_instance_valid(ai):
             continue
         if ai.dead:
-            if is_player_kill():
-                var xpReward = cfg_xp_boss if ai.boss else cfg_xp_kill
-                xp += xpReward
-                xpTotal += xpReward
-                SaveXP()
+            _pending_kills.append({"ref": ai, "died_at": now})
         else:
             still_alive.append(ai)
     _tracked_ai = still_alive
+
+    # Step 2: re-check is_player_kill() every frame within a grace window,
+    # so a single-frame miss (physics vs process divergence, HellMAI's heavier
+    # death pipeline, etc.) doesn't permanently lose the kill.
+    if _pending_kills.is_empty():
+        return
+    var still_pending: Array = []
+    for pk in _pending_kills:
+        var ai = pk.ref
+        if !is_instance_valid(ai):
+            continue
+        if is_player_kill():
+            var is_boss: bool = ai.boss if "boss" in ai else false
+            var xpReward = cfg_xp_boss if is_boss else cfg_xp_kill
+            xp += xpReward
+            xpTotal += xpReward
+            SaveXP()
+        elif (now - pk.died_at) < KILL_GRACE_MS:
+            still_pending.append(pk)
+    _pending_kills = still_pending
 
 # --- Compat: Container/Search XP (replaces LootContainer.gd override) ---
 
@@ -259,8 +361,14 @@ func _check_container_xp():
     if cid in _awarded_containers:
         return
     _awarded_containers[cid] = true
-    xp += cfg_xp_container
-    xpTotal += cfg_xp_container
+    # Accumulate fractional rewards so values like 0.3 actually work:
+    # search ~4 containers = +1 XP. Whole-number configs award instantly.
+    _container_xp_fraction += cfg_xp_container
+    var whole: int = int(floor(_container_xp_fraction))
+    if whole > 0:
+        xp += whole
+        xpTotal += whole
+        _container_xp_fraction -= float(whole)
     SaveXP()
     # Scavenger skill — bonus loot from containers
     if get_level(11) > 0:
@@ -290,8 +398,12 @@ func _try_scavenge(iface, ui_manager):
     if items.is_empty():
         return
     var source_item = items[randi() % items.size()]
-    var item_name = str(source_item.slotData.itemData.name) if source_item.slotData else "Item"
+    if !source_item.slotData or !source_item.slotData.itemData:
+        return
+    var item_name = str(source_item.slotData.itemData.name)
     var dupe_data = source_item.slotData.duplicate()
+    if !dupe_data or !dupe_data.itemData:
+        return
     if dupe_data.itemData.stackable:
         dupe_data.amount = 1
     if iface.AutoStack(dupe_data, iface.containerGrid) or iface.Create(dupe_data, iface.containerGrid, true):
@@ -401,19 +513,60 @@ func _on_trade_accept():
 
 func _track_tasks():
     var still_valid: Array = []
-    for entry in _tracked_traders:
-        var trader = entry.ref.get_ref()
+    var awarded := false
+    for wref in _tracked_traders:
+        var trader = wref.get_ref()
         if !trader or !is_instance_valid(trader):
             continue
-        var current_count = trader.tasksCompleted.size()
-        if current_count > entry.count:
-            var completed = current_count - entry.count
+        still_valid.append(wref)
+        # traderData may load slightly after the node is added; skip until ready
+        if !("traderData" in trader) or trader.traderData == null:
+            continue
+        var key: String = str(trader.traderData.name)
+        if key.is_empty():
+            continue
+        var current_count: int = trader.tasksCompleted.size()
+        # First sight: seed the baseline. _sync_trader_baselines_from_save() has
+        # already run on menu→game to seed historical counts from Traders.tres,
+        # so this only fires for truly new traders or new games.
+        if not cfg_trader_task_counts.has(key):
+            cfg_trader_task_counts[key] = current_count
+            continue
+        var baseline: int = cfg_trader_task_counts[key]
+        if current_count > baseline:
+            var completed = current_count - baseline
             xp += cfg_xp_task * completed
             xpTotal += cfg_xp_task * completed
-            SaveXP()
-            entry.count = current_count
-        still_valid.append(entry)
+            cfg_trader_task_counts[key] = current_count
+            awarded = true
+        # Never ratchet the baseline DOWN here. On zone reload the trader is
+        # re-instantiated with an empty tasksCompleted until LoadTrader() runs,
+        # which would otherwise look like "save wiped" and re-award history
+        # on the next repopulate. New games are handled by ResetXP().
     _tracked_traders = still_valid
+    if awarded:
+        SaveXP()
+
+func _sync_trader_baselines_from_save():
+    # Read user://Traders.tres (the base game's authoritative task list) and
+    # seed cfg_trader_task_counts for any trader not already tracked. Fixes
+    # the first-install scenario where a player has historical trader progress
+    # that we'd otherwise miscount once LoadTrader() repopulates tasksCompleted.
+    # Uses has() so fresher in-session values are never overwritten.
+    if !FileAccess.file_exists("user://Traders.tres"):
+        return
+    var save = load("user://Traders.tres")
+    if save == null:
+        return
+    # Duck-type instead of `is TraderSave` — the class_name registry may not
+    # be ready yet, and any future save format adding new trader sections
+    # shouldn't break us either.
+    for trader_name in ["Generalist", "Doctor", "Gunsmith", "Grandma"]:
+        if cfg_trader_task_counts.has(trader_name):
+            continue
+        var prop = trader_name.to_lower()
+        if prop in save and save.get(prop) is Array:
+            cfg_trader_task_counts[trader_name] = save.get(prop).size()
 
 # --- Compat: Speed bonus (replaces Controller.gd override) ---
 
@@ -421,43 +574,46 @@ func _apply_speed_bonus():
     var level = get_level(10)
     if level <= 0:
         return
-    if _controller_ref and is_instance_valid(_controller_ref):
-        var bonus = 1.0 + (level * cfg_speed_bonus)
-        _controller_ref.sprintSpeed = BASE_SPRINT_SPEED * bonus
-        _controller_ref.walkSpeed = BASE_WALK_SPEED * bonus
+    # Never touch the Controller mid-scene-load — is_instance_valid can return
+    # true during teardown, and writing to a half-freed node crashes. Users
+    # reported this as the athleticism zone-transition CTD.
+    if "isTransitioning" in gameData and gameData.isTransitioning:
         return
-    # Lazily find Controller node
-    var ctrl = get_tree().current_scene.get_node_or_null("/root/Map/Core/Controller")
-    if ctrl and "sprintSpeed" in ctrl and "walkSpeed" in ctrl:
+    if "isCaching" in gameData and gameData.isCaching:
+        return
+    if _controller_ref and is_instance_valid(_controller_ref) and _controller_ref.is_inside_tree():
+        var bonus = 1.0 + (level * cfg_speed_bonus)
+        _controller_ref.sprintSpeed = _controller_base_sprint * bonus
+        _controller_ref.walkSpeed = _controller_base_walk * bonus
+        return
+    # Stale or first-contact — lazy re-lookup.
+    _controller_ref = null
+    var scene = get_tree().current_scene
+    if !scene:
+        return
+    var ctrl = scene.get_node_or_null("/root/Map/Core/Controller")
+    if ctrl and ctrl.is_inside_tree() and "sprintSpeed" in ctrl and "walkSpeed" in ctrl:
         _controller_ref = ctrl
+        # Capture the REAL base speeds before we modify them, so compatible mods
+        # that bump base speed (or the game applying injury/state penalties)
+        # stack correctly with ours instead of being stomped.
+        _controller_base_walk = ctrl.walkSpeed
+        _controller_base_sprint = ctrl.sprintSpeed
         var bonus = 1.0 + (level * cfg_speed_bonus)
-        ctrl.sprintSpeed = BASE_SPRINT_SPEED * bonus
-        ctrl.walkSpeed = BASE_WALK_SPEED * bonus
+        ctrl.sprintSpeed = _controller_base_sprint * bonus
+        ctrl.walkSpeed = _controller_base_walk * bonus
 
-# --- Compat: Cold resistance (replaces Character.gd Temperature override) ---
-
-func _apply_cold_resistance(delta):
-    var level = get_level(7)
-    if level <= 0:
-        return
-    # Base game doesn't have cold resistance — compensate by adding back
-    # the portion of temperature drain that our skill should prevent.
-    # Base drain: (delta * rate) * insulation. We add back: drain * (level * cfg_coldres_reduce)
-    if "season" in gameData and gameData.season == 2 and !gameData.shelter and !gameData.heat:
-        if "frostbite" in gameData and !gameData.frostbite:
-            var character = get_tree().current_scene.get_node_or_null("/root/Map/Core/Controller/Character")
-            var ins = character.insulation if character and "insulation" in character else 1.0
-            var base_drain = 0.0
-            if "isSubmerged" in gameData and gameData.isSubmerged:
-                base_drain = (delta * 8.0) * ins
-            elif "isWater" in gameData and gameData.isWater:
-                base_drain = (delta * 4.0) * ins
-            elif "indoor" in gameData and gameData.indoor:
-                base_drain = (delta / 10.0) * ins
-            else:
-                base_drain = (delta / 5.0) * ins
-            var reduction = base_drain * (level * cfg_coldres_reduce)
-            gameData.temperature += reduction
+func _reset_session_state():
+    # Drop all per-run caches. Called on entering the main menu so the next
+    # run starts clean — prevents stale Node refs across Map reloads and
+    # caps _awarded_containers growth.
+    _awarded_containers.clear()
+    _pending_kills.clear()
+    _tracked_ai.clear()
+    _tracked_traders.clear()
+    _controller_ref = null
+    _trade_btn = null
+    _trade_connected = false
 
 func get_level(index: int) -> int:
     if not is_skill_enabled(index):
@@ -498,11 +654,11 @@ func _register_mcm():
         })
         menu_pos += 1
 
-    _config.set_value("Int", "cfg_xp_container", {
+    _config.set_value("Float", "cfg_xp_container", {
         "name" = "Container Search XP",
-        "tooltip" = "XP earned when searching containers",
-        "default" = 1, "value" = 1,
-        "minRange" = 0, "maxRange" = 50,
+        "tooltip" = "XP earned per container (fractional values supported — e.g. 0.3 awards 1 XP per ~4 containers searched)",
+        "default" = 1.0, "value" = 1.0,
+        "minRange" = 0.0, "maxRange" = 5.0, "step" = 0.1,
         "menu_pos" = 13
     })
     _config.set_value("Int", "cfg_xp_kill", {
@@ -628,12 +784,6 @@ func _register_mcm():
         DirAccess.open("user://").make_dir_recursive(MCM_FILE_PATH)
         _config.save(MCM_FILE_PATH + "/config.ini")
     else:
-        # Migrate: remove stale Float section from older versions
-        var _saved = ConfigFile.new()
-        _saved.load(MCM_FILE_PATH + "/config.ini")
-        if _saved.has_section("Float"):
-            _saved.erase_section("Float")
-            _saved.save(MCM_FILE_PATH + "/config.ini")
         _mcm_helpers.CheckConfigurationHasUpdated(MCM_MOD_ID, _config, MCM_FILE_PATH + "/config.ini")
         _config.load(MCM_FILE_PATH + "/config.ini")
 
@@ -664,7 +814,7 @@ func _apply_mcm_config(config: ConfigFile):
         var key = "cfg_skill_" + sid
         if config.has_section_key("Bool", key):
             cfg_skill_enabled[sid] = _mcm_val(config, "Bool", key, cfg_skill_enabled.get(sid, true))
-    cfg_xp_container = _mcm_val(config, "Int", "cfg_xp_container", cfg_xp_container)
+    cfg_xp_container = float(_mcm_val(config, "Float", "cfg_xp_container", cfg_xp_container))
     cfg_xp_kill = _mcm_val(config, "Int", "cfg_xp_kill", cfg_xp_kill)
     cfg_xp_boss = _mcm_val(config, "Int", "cfg_xp_boss", cfg_xp_boss)
     cfg_xp_trade = _mcm_val(config, "Int", "cfg_xp_trade", cfg_xp_trade)
@@ -688,7 +838,7 @@ func _apply_mcm_config(config: ConfigFile):
 func LoadConfig():
     var cfg = ConfigFile.new()
     if cfg.load("user://XPConfig.cfg") == OK:
-        cfg_xp_container = cfg.get_value("xp_rewards", "container", 1)
+        cfg_xp_container = float(cfg.get_value("xp_rewards", "container", 1.0))
         cfg_xp_kill = cfg.get_value("xp_rewards", "kill", 25)
         cfg_xp_boss = cfg.get_value("xp_rewards", "boss", 100)
         cfg_xp_trade = cfg.get_value("xp_rewards", "trade", 10)
@@ -753,6 +903,7 @@ func _parse_int_list(s, fallback: Array) -> Array:
     return result
 
 func SaveXP():
+    var path = _get_xp_data_path()
     var cfg = ConfigFile.new()
     cfg.set_value("xp", "xp", xp)
     cfg.set_value("xp", "xpTotal", xpTotal)
@@ -768,7 +919,10 @@ func SaveXP():
     cfg.set_value("xp", "xpRecoil", xpRecoil)
     cfg.set_value("xp", "xpSpeed", xpSpeed)
     cfg.set_value("xp", "xpScavenger", xpScavenger)
-    cfg.save("user://XPData.cfg")
+    cfg.set_value("xp", "container_fraction", _container_xp_fraction)
+    for trader_name in cfg_trader_task_counts.keys():
+        cfg.set_value("trader_task_counts", trader_name, cfg_trader_task_counts[trader_name])
+    cfg.save(path)
     _sync_to_gamedata()
     _ensure_marker()
 
@@ -788,8 +942,21 @@ func _sync_to_gamedata():
     gameData.xpRegen = get_level(6)
 
 func LoadXP():
+    var path = _get_xp_data_path()
+    # First-time Patty Profiles migration: if the profile-specific file
+    # doesn't exist yet but a legacy user://XPData.cfg does, pull it forward
+    # so existing progression isn't lost. Delete the legacy afterwards so
+    # subsequent new profiles start clean instead of inheriting the first
+    # profile's data on every LoadXP.
+    if path != "user://XPData.cfg" and !FileAccess.file_exists(path) and FileAccess.file_exists("user://XPData.cfg"):
+        _copy_file_bytes("user://XPData.cfg", path)
+        DirAccess.remove_absolute(ProjectSettings.globalize_path("user://XPData.cfg"))
+    # Zero in-memory state before loading so switching to a profile with no
+    # saved file leaves us cleanly at zero instead of carrying the previous
+    # profile's XP/skill levels.
+    _zero_xp_state()
     var cfg = ConfigFile.new()
-    if cfg.load("user://XPData.cfg") == OK:
+    if cfg.load(path) == OK:
         xp = cfg.get_value("xp", "xp", 0)
         xpTotal = cfg.get_value("xp", "xpTotal", 0)
         xpHealth = cfg.get_value("xp", "xpHealth", 0)
@@ -804,9 +971,14 @@ func LoadXP():
         xpRecoil = cfg.get_value("xp", "xpRecoil", 0)
         xpSpeed = cfg.get_value("xp", "xpSpeed", 0)
         xpScavenger = cfg.get_value("xp", "xpScavenger", 0)
+        _container_xp_fraction = float(cfg.get_value("xp", "container_fraction", 0.0))
+        if cfg.has_section("trader_task_counts"):
+            for trader_name in cfg.get_section_keys("trader_task_counts"):
+                cfg_trader_task_counts[trader_name] = cfg.get_value("trader_task_counts", trader_name, 0)
+    _last_xp_path = path
     _sync_to_gamedata()
 
-func ResetXP():
+func _zero_xp_state():
     xp = 0
     xpTotal = 0
     xpHealth = 0
@@ -821,8 +993,14 @@ func ResetXP():
     xpRecoil = 0
     xpSpeed = 0
     xpScavenger = 0
-    if FileAccess.file_exists("user://XPData.cfg"):
-        DirAccess.remove_absolute(ProjectSettings.globalize_path("user://XPData.cfg"))
+    _container_xp_fraction = 0.0
+    cfg_trader_task_counts.clear()
+
+func ResetXP():
+    _zero_xp_state()
+    var path = _get_xp_data_path()
+    if FileAccess.file_exists(path):
+        DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
     _sync_to_gamedata()
 
 func _ensure_marker():
