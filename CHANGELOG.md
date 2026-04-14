@@ -1,5 +1,10 @@
 # XP & Skills System — Changelog
 
+### v2.2.2
+- **Compatibility with mods that override Character.gd's Health() function** (e.g. injuries-system-rework) — our `Health()` no longer reimplements the damage block line-for-line. It now calls `super(delta)` to delegate damage to whatever is next in the override chain (base game, or another mod sitting between us and the base). This means other mods' custom damage tuning (bleeding timers, fracture-while-running, rupture/headshot behaviour, etc.) actually runs when both mods are installed together, instead of being silently skipped because our non-super reimplementation was blocking them.
+- To avoid double-applied regen, `gameData.xpRegen` is temporarily zeroed across the `super()` call so the base game's hardcoded `xpRegen * 0.2` regen block short-circuits — our own configurable `cfg_regen_per_level` + prestige regen is then applied once, after super, exactly as before.
+- No behaviour change in vanilla (no other Character.gd mod installed): all base damage conditions still apply via super → base, and our regen + prestige bonus runs on top just like in v2.2.1.
+
 ### v2.2.1
 - Fixed prestige ranks persisting into a new game. The new-game detection path (marker file wiped by FormatSave) was only calling ResetXP, which preserves prestige by design so it survives regular death. New game is unambiguous so it now also clears prestige_counts and deletes the XPPrestige file regardless of the "Reset Prestige on Death" toggle.
 

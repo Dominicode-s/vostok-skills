@@ -6,34 +6,19 @@ func _ready():
     xp_mod = Engine.get_meta("XPMain", null)
 
 func Health(delta):
-    if gameData.starvation && !gameData.isDead:
-        gameData.health -= delta / 10
+    # Delegate the damage block to whatever is next in the Character.gd
+    # chain (the base game by default, or another mod like injuries system
+    # rework that does its own `Health()` damage tuning). We zero
+    # gameData.xpRegen across super() so the base game's hardcoded
+    # `xpRegen * 0.2` regen block short-circuits — otherwise it would
+    # double-apply alongside our configurable regen below. Everything else
+    # in the base Health() (damage conditions, Death() trigger) still runs.
+    var saved_xp_regen = gameData.xpRegen
+    gameData.xpRegen = 0
+    super(delta)
+    gameData.xpRegen = saved_xp_regen
 
-    if gameData.dehydration && !gameData.isDead:
-        gameData.health -= delta / 10
-
-    if gameData.insanity && !gameData.isDead:
-        gameData.health -= delta / 10
-
-    if gameData.frostbite && !gameData.isDead:
-        gameData.health -= delta / 10
-
-    if gameData.bleeding && !gameData.isDead:
-        gameData.health -= delta / 5
-
-    if gameData.fracture && !gameData.isDead:
-        gameData.health -= delta / 5
-
-    if gameData.burn && !gameData.isDead:
-        gameData.health -= delta / 5
-
-    if gameData.rupture && !gameData.isDead:
-        gameData.health -= delta
-
-    if gameData.headshot && !gameData.isDead:
-        gameData.health -= delta
-
-    # XP: Passive health regen. Prestige bonuses add to both max HP and the
+    # XP: passive health regen. Prestige bonuses add to both max HP and the
     # per-second regen rate on top of skill-tree bonuses, so a player with
     # Regen skill 0 but Regen prestige 2 still gets a slow trickle.
     if xp_mod and !gameData.isDead and gameData.health > 0:
@@ -42,9 +27,6 @@ func Health(delta):
             var maxHP = 100.0 + xp_mod.get_level(0) * xp_mod.cfg_hp_per_level + xp_mod.prestige_hp_bonus()
             if gameData.health < maxHP:
                 gameData.health += delta * regen_rate
-
-    if gameData.health <= 0 && !gameData.isDead && !gameData.decor:
-        Death()
 
 func Energy(delta):
     if !gameData.starvation:
