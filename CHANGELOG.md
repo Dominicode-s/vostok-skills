@@ -1,5 +1,10 @@
 # XP & Skills System — Changelog
 
+### v2.2.4
+- **Rebalanced prestige Regen bonus to match v2.2.3's lowered base regen.** When base regen dropped from 0.20 to 0.02 HP/s per skill level, the old prestige regen default of +0.05 HP/s per rank became wildly strong relative to a skill level (~250% instead of the intended ~25%). Prestige Regen default is now 0.005 HP/s per rank, matching the ~25% of a skill level ratio that the other prestige stats (Vitality, Pack Mule, etc.) use.
+- Prestige Regen MCM entry is now a Float slider with 0.001 HP/s precision (range 0.000–0.100), consistent with the base regen slider from v2.2.3.
+- Migration: the stale Int entry for `cfg_prestige_regen` is automatically erased from the saved MCM config on load, same pattern as the v2.2.3 migration for base regen.
+
 ### v2.2.3
 - **Regen slider is now a granular Float slider with 0.01 HP/s precision.** Previously it was an integer slider in "×0.1 HP/s" steps, which meant the lowest non-zero setting was 0.1 HP/s per level — too fast for players who wanted a gentle passive trickle. You can now set anything from 0.00 (disabled) to 2.00 HP/s per Regeneration skill level, in 0.01 increments.
 - **Default regen lowered from 0.2 to 0.02 HP/s per level.** Fully maxed Regeneration (skill level 5) now passively heals 0.10 HP/s — roughly 17 minutes to heal 100 HP. Players who preferred the old aggressive regen can simply crank the slider back up.

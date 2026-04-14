@@ -132,7 +132,7 @@ var cfg_prestige_carry: float = 1.0     # Pack Mule: +1 kg
 var cfg_prestige_hunger: float = 0.02   # Hunger: -2% drain
 var cfg_prestige_thirst: float = 0.02   # Thirst: -2% drain
 var cfg_prestige_mental: float = 0.02   # Iron Will: -2% drain
-var cfg_prestige_regen: float = 0.05    # Regen: +0.05 HP/s
+var cfg_prestige_regen: float = 0.005   # Regen: +0.005 HP/s (25% of a skill level at default base regen)
 var cfg_prestige_coldres: float = 0.02  # Cold Resist: -2% drain
 var cfg_prestige_stealth: float = 0.02  # Stealth: -2% (no-op, kept for consistency)
 var cfg_prestige_recoil: float = 0.02   # Recoil: -2% recoil
@@ -993,11 +993,11 @@ func _register_mcm():
         "minRange" = 0, "maxRange" = 10,
         "menu_pos" = 38
     })
-    _config.set_value("Int", "cfg_prestige_regen", {
-        "name" = "Prestige Regen per Rank (×0.01 HP/s)",
-        "tooltip" = "Permanent passive regen per Regeneration prestige rank (5 = +0.05 HP/s per rank).",
-        "default" = 5, "value" = 5,
-        "minRange" = 0, "maxRange" = 20,
+    _config.set_value("Float", "cfg_prestige_regen", {
+        "name" = "Prestige Regen HP/s per Rank",
+        "tooltip" = "Permanent passive HP regen per Regeneration prestige rank. Stacks additively on top of the skill tree. Default 0.005 means one prestige rank ≈ 25% of a skill level at the default base regen rate, matching the other prestige stats.",
+        "default" = 0.005, "value" = 0.005,
+        "minRange" = 0.0, "maxRange" = 0.1, "step" = 0.001,
         "menu_pos" = 39
     })
     _config.set_value("Int", "cfg_prestige_coldres", {
@@ -1047,14 +1047,19 @@ func _register_mcm():
         DirAccess.open("user://").make_dir_recursive(MCM_FILE_PATH)
         _config.save(MCM_FILE_PATH + "/config.ini")
     else:
-        # Migrate: cfg_regen_per_level used to be an Int slider (×0.1 HP/s
-        # steps). v2.2.3 switched it to a Float slider with 0.01 steps.
-        # Strip the stale Int entry so MCM doesn't keep the old value and
-        # overwrite our new granular default on next save.
+        # Migrate: cfg_regen_per_level (v2.2.3) and cfg_prestige_regen
+        # (v2.2.4) both switched from Int sliders to granular Float sliders
+        # and lowered their defaults. Strip the stale Int entries so MCM
+        # doesn't keep the old values and overwrite our new defaults on
+        # next save.
         var _saved = ConfigFile.new()
         if _saved.load(MCM_FILE_PATH + "/config.ini") == OK:
-            if _saved.has_section_key("Int", "cfg_regen_per_level"):
-                _saved.erase_section_key("Int", "cfg_regen_per_level")
+            var changed := false
+            for stale_key in ["cfg_regen_per_level", "cfg_prestige_regen"]:
+                if _saved.has_section_key("Int", stale_key):
+                    _saved.erase_section_key("Int", stale_key)
+                    changed = true
+            if changed:
                 _saved.save(MCM_FILE_PATH + "/config.ini")
         _mcm_helpers.CheckConfigurationHasUpdated(MCM_MOD_ID, _config, MCM_FILE_PATH + "/config.ini")
         _config.load(MCM_FILE_PATH + "/config.ini")
@@ -1113,7 +1118,7 @@ func _apply_mcm_config(config: ConfigFile):
     cfg_prestige_hunger = _mcm_val(config, "Int", "cfg_prestige_hunger", 2) / 100.0
     cfg_prestige_thirst = _mcm_val(config, "Int", "cfg_prestige_thirst", 2) / 100.0
     cfg_prestige_mental = _mcm_val(config, "Int", "cfg_prestige_mental", 2) / 100.0
-    cfg_prestige_regen = _mcm_val(config, "Int", "cfg_prestige_regen", 5) / 100.0
+    cfg_prestige_regen = float(_mcm_val(config, "Float", "cfg_prestige_regen", cfg_prestige_regen))
     cfg_prestige_coldres = _mcm_val(config, "Int", "cfg_prestige_coldres", 2) / 100.0
     cfg_prestige_stealth = _mcm_val(config, "Int", "cfg_prestige_stealth", 2) / 100.0
     cfg_prestige_recoil = _mcm_val(config, "Int", "cfg_prestige_recoil", 2) / 100.0
