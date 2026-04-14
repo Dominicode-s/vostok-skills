@@ -90,7 +90,7 @@ var cfg_carry_per_level: float = 2.0
 var cfg_hunger_reduce: float = 0.08
 var cfg_thirst_reduce: float = 0.08
 var cfg_mental_reduce: float = 0.08
-var cfg_regen_per_level: float = 0.2
+var cfg_regen_per_level: float = 0.02
 var cfg_coldres_reduce: float = 0.08
 var cfg_stealth_reduce: float = 0.05
 var cfg_recoil_reduce: float = 0.05
@@ -111,6 +111,40 @@ var cfg_skill_enabled: Dictionary = {
 	"regeneration": true, "cold_resistance": true, "stealth": true,
 	"recoil_control": true, "athleticism": true, "scavenger": true
 }
+
+# ─── Prestige ─────────────────────────────────────────────────
+# Permanent bonuses earned by wiping all XP + skill levels. Unlocked
+# when every enabled skill is at its max level. Each prestige rank
+# adds a small additive bonus ON TOP of the skill tree (not baked
+# into effective skill level). Stored separately at
+# user://XPPrestige_<profile>.cfg so death / ResetXP don't wipe it
+# (unless cfg_prestige_reset_on_death is on).
+
+var cfg_prestige_enabled: bool = true
+var cfg_prestige_reset_on_death: bool = false
+
+# Per-skill permanent bonus magnitudes (per prestige rank).
+# Roughly half the strength of a skill level so combined they're
+# meaningful but not absurd. All exposed in MCM.
+var cfg_prestige_hp: float = 3.0        # Vitality: +3 max HP
+var cfg_prestige_stamina: float = 0.03  # Endurance: -3% drain
+var cfg_prestige_carry: float = 1.0     # Pack Mule: +1 kg
+var cfg_prestige_hunger: float = 0.02   # Hunger: -2% drain
+var cfg_prestige_thirst: float = 0.02   # Thirst: -2% drain
+var cfg_prestige_mental: float = 0.02   # Iron Will: -2% drain
+var cfg_prestige_regen: float = 0.005   # Regen: +0.005 HP/s (25% of a skill level at default base regen)
+var cfg_prestige_coldres: float = 0.02  # Cold Resist: -2% drain
+var cfg_prestige_stealth: float = 0.02  # Stealth: -2% (no-op, kept for consistency)
+var cfg_prestige_recoil: float = 0.02   # Recoil: -2% recoil
+var cfg_prestige_speed: float = 0.01    # Athleticism: +1% speed
+var cfg_prestige_scavenger: float = 0.02  # Scavenger: +2% loot chance
+
+# Per-skill prestige rank caps. -1 = unlimited (only Vitality by default).
+# Order matches skill_ids.
+var cfg_prestige_caps: Array = [-1, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10]
+
+# Runtime prestige state — skill_id -> rank count.
+var prestige_counts: Dictionary = {}
 
 # MCM integration
 var _mcm_helpers = null
@@ -192,7 +226,15 @@ func _process(delta):
             LoadXP()
         if !FileAccess.file_exists("user://XPSkillsMarker.tres"):
             ResetXP()
-            print("[XP Skills] New game detected — XP reset")
+            # New game wipes prestige too. ResetXP alone only wipes prestige
+            # when the hardcore "reset on death" toggle is on, because it
+            # also runs on regular death. New game is unambiguous so we
+            # always clear prestige here regardless of that toggle.
+            prestige_counts.clear()
+            var pp = _get_prestige_path()
+            if FileAccess.file_exists(pp):
+                DirAccess.remove_absolute(ProjectSettings.globalize_path(pp))
+            print("[XP Skills] New game detected — XP and prestige reset")
         _ensure_marker()
         # Seed trader baselines from the authoritative save file. Must happen
         # after LoadXP (so profile-switched counts are respected) and after
@@ -299,9 +341,10 @@ func _apply_recoil_reduction(node: Node):
     if !is_instance_valid(node) or !"data" in node or !node.data:
         return
     var level = get_level(9)
-    if level <= 0:
+    var prestige_reduction = prestige_recoil_bonus()
+    if level <= 0 and prestige_reduction <= 0.0:
         return
-    var mult = maxf(1.0 - (level * cfg_recoil_reduce), 0.05)
+    var mult = maxf(1.0 - (level * cfg_recoil_reduce) - prestige_reduction, 0.05)
     # Duplicate so we don't modify the shared weapon template resource
     node.data = node.data.duplicate()
     node.data.verticalRecoil *= mult
@@ -370,12 +413,13 @@ func _check_container_xp():
         xpTotal += whole
         _container_xp_fraction -= float(whole)
     SaveXP()
-    # Scavenger skill — bonus loot from containers
-    if get_level(11) > 0:
+    # Scavenger skill — bonus loot from containers. Prestige grants a
+    # permanent baseline chance even at skill level 0.
+    if get_level(11) > 0 or prestige_scavenger_bonus() > 0.0:
         get_tree().create_timer(0.1).timeout.connect(_try_scavenge.bind(iface, ui))
 
 func _try_scavenge(iface, ui_manager):
-    var chance = get_level(11) * cfg_scavenger_chance
+    var chance = get_level(11) * cfg_scavenger_chance + prestige_scavenger_bonus()
     if randf() >= chance:
         return
     if iface == null or !is_instance_valid(iface):
@@ -572,7 +616,8 @@ func _sync_trader_baselines_from_save():
 
 func _apply_speed_bonus():
     var level = get_level(10)
-    if level <= 0:
+    var prestige_bonus = prestige_speed_bonus()
+    if level <= 0 and prestige_bonus <= 0.0:
         return
     # Never touch the Controller mid-scene-load — is_instance_valid can return
     # true during teardown, and writing to a half-freed node crashes. Users
@@ -581,8 +626,8 @@ func _apply_speed_bonus():
         return
     if "isCaching" in gameData and gameData.isCaching:
         return
+    var bonus = 1.0 + (level * cfg_speed_bonus) + prestige_bonus
     if _controller_ref and is_instance_valid(_controller_ref) and _controller_ref.is_inside_tree():
-        var bonus = 1.0 + (level * cfg_speed_bonus)
         _controller_ref.sprintSpeed = _controller_base_sprint * bonus
         _controller_ref.walkSpeed = _controller_base_walk * bonus
         return
@@ -599,7 +644,6 @@ func _apply_speed_bonus():
         # stack correctly with ours instead of being stomped.
         _controller_base_walk = ctrl.walkSpeed
         _controller_base_sprint = ctrl.sprintSpeed
-        var bonus = 1.0 + (level * cfg_speed_bonus)
         ctrl.sprintSpeed = _controller_base_sprint * bonus
         ctrl.walkSpeed = _controller_base_walk * bonus
 
@@ -632,6 +676,120 @@ func get_level(index: int) -> int:
         10: return xpSpeed
         11: return xpScavenger
     return 0
+
+# ─── Prestige helpers ─────────────────────────────────────────
+
+func get_prestige_count(skill_index: int) -> int:
+    if skill_index < 0 or skill_index >= skill_ids.size():
+        return 0
+    return int(prestige_counts.get(skill_ids[skill_index], 0))
+
+func get_prestige_cap(skill_index: int) -> int:
+    if skill_index < 0 or skill_index >= cfg_prestige_caps.size():
+        return 10
+    return int(cfg_prestige_caps[skill_index])
+
+func can_prestige_skill(skill_index: int) -> bool:
+    # A skill can receive more prestige ranks if its cap is unlimited (-1)
+    # or if its current rank count is below the cap.
+    var cap = get_prestige_cap(skill_index)
+    if cap < 0:
+        return true
+    return get_prestige_count(skill_index) < cap
+
+func is_prestige_available() -> bool:
+    # Unlocked when every ENABLED skill is at its max level, and at least
+    # one skill is enabled. Returns false if the prestige feature itself
+    # is disabled in MCM.
+    if not cfg_prestige_enabled:
+        return false
+    var has_enabled := false
+    for i in skill_ids.size():
+        if is_skill_enabled(i):
+            has_enabled = true
+            if get_level(i) < cfg_max_levels[i]:
+                return false
+    return has_enabled
+
+func do_prestige(skill_index: int) -> bool:
+    # Sanity checks — callers (UI) should already verify these, but be
+    # defensive since prestige is destructive.
+    if not is_prestige_available():
+        return false
+    if skill_index < 0 or skill_index >= skill_ids.size():
+        return false
+    if not can_prestige_skill(skill_index):
+        return false
+    # Wipe all XP and stored skill levels. _zero_xp_state clears the XP
+    # state but NOT prestige_counts, which is the whole point.
+    _zero_xp_state()
+    var sid: String = skill_ids[skill_index]
+    prestige_counts[sid] = int(prestige_counts.get(sid, 0)) + 1
+    SaveXP()
+    _save_prestige()
+    _sync_to_gamedata()
+    return true
+
+# Per-skill additive prestige bonuses. Callers (Character.gd, Interface.gd,
+# and Main.gd's own compat polling) add these to the skill-tree bonus so
+# prestige is a permanent baseline that stacks on top of leveling.
+
+func prestige_hp_bonus() -> float:
+    return get_prestige_count(0) * cfg_prestige_hp
+
+func prestige_stamina_bonus() -> float:
+    return get_prestige_count(1) * cfg_prestige_stamina
+
+func prestige_carry_bonus() -> float:
+    return get_prestige_count(2) * cfg_prestige_carry
+
+func prestige_hunger_bonus() -> float:
+    return get_prestige_count(3) * cfg_prestige_hunger
+
+func prestige_thirst_bonus() -> float:
+    return get_prestige_count(4) * cfg_prestige_thirst
+
+func prestige_mental_bonus() -> float:
+    return get_prestige_count(5) * cfg_prestige_mental
+
+func prestige_regen_bonus() -> float:
+    return get_prestige_count(6) * cfg_prestige_regen
+
+func prestige_coldres_bonus() -> float:
+    return get_prestige_count(7) * cfg_prestige_coldres
+
+func prestige_stealth_bonus() -> float:
+    return get_prestige_count(8) * cfg_prestige_stealth
+
+func prestige_recoil_bonus() -> float:
+    return get_prestige_count(9) * cfg_prestige_recoil
+
+func prestige_speed_bonus() -> float:
+    return get_prestige_count(10) * cfg_prestige_speed
+
+func prestige_scavenger_bonus() -> float:
+    return get_prestige_count(11) * cfg_prestige_scavenger
+
+func _get_prestige_path() -> String:
+    var profile = _get_active_profile()
+    if profile.is_empty():
+        return "user://XPPrestige.cfg"
+    return "user://XPPrestige_" + profile + ".cfg"
+
+func _save_prestige():
+    var cfg = ConfigFile.new()
+    for sid in prestige_counts.keys():
+        cfg.set_value("prestige", sid, prestige_counts[sid])
+    cfg.save(_get_prestige_path())
+
+func _load_prestige():
+    prestige_counts.clear()
+    var cfg = ConfigFile.new()
+    if cfg.load(_get_prestige_path()) != OK:
+        return
+    if cfg.has_section("prestige"):
+        for key in cfg.get_section_keys("prestige"):
+            prestige_counts[key] = int(cfg.get_value("prestige", key, 0))
 
 # --- MCM Integration ---
 
@@ -737,11 +895,11 @@ func _register_mcm():
         "minRange" = 1, "maxRange" = 20,
         "menu_pos" = 24
     })
-    _config.set_value("Int", "cfg_regen_per_level", {
-        "name" = "Regen Per Level (×0.1 HP/s)",
-        "tooltip" = "HP/sec passive regeneration per Regeneration level (2 = 0.2 HP/s per level)",
-        "default" = 2, "value" = 2,
-        "minRange" = 1, "maxRange" = 20,
+    _config.set_value("Float", "cfg_regen_per_level", {
+        "name" = "Regen HP/s per Level",
+        "tooltip" = "Passive HP regen per Regeneration skill level. Granular (0.01 steps) so you can tune it to taste. Default 0.02 means fully maxed Regen (skill 5) = 0.10 HP/s — about 17 minutes to heal from 0 to 100. Set to 0 to disable regen entirely.",
+        "default" = 0.02, "value" = 0.02,
+        "minRange" = 0.0, "maxRange" = 2.0, "step" = 0.01,
         "menu_pos" = 25
     })
     _config.set_value("Int", "cfg_coldres_reduce", {
@@ -780,10 +938,129 @@ func _register_mcm():
         "menu_pos" = 30
     })
 
+    # ─── Prestige ───
+    _config.set_value("Bool", "cfg_prestige_enabled", {
+        "name" = "Enable Prestige",
+        "tooltip" = "When ON, a 'Prestige' button appears at the bottom of the Skills panel once every enabled skill is maxed. Clicking it lets you wipe all XP and skill levels in exchange for a permanent bonus to one chosen stat.",
+        "default" = true, "value" = true,
+        "menu_pos" = 31
+    })
+    _config.set_value("Bool", "cfg_prestige_reset_on_death", {
+        "name" = "Reset Prestige on Death",
+        "tooltip" = "Hardcore option: when ON, dying wipes your prestige ranks along with your XP and skill levels. Default OFF (prestige is permanent).",
+        "default" = false, "value" = false,
+        "menu_pos" = 32
+    })
+    _config.set_value("Int", "cfg_prestige_hp", {
+        "name" = "Prestige Max HP per Rank",
+        "tooltip" = "Permanent max HP gained per Vitality prestige rank.",
+        "default" = 3, "value" = 3,
+        "minRange" = 0, "maxRange" = 20,
+        "menu_pos" = 33
+    })
+    _config.set_value("Int", "cfg_prestige_stamina", {
+        "name" = "Prestige Stamina Reduce per Rank (%)",
+        "tooltip" = "Permanent stamina drain reduction per Endurance prestige rank.",
+        "default" = 3, "value" = 3,
+        "minRange" = 0, "maxRange" = 10,
+        "menu_pos" = 34
+    })
+    _config.set_value("Int", "cfg_prestige_carry", {
+        "name" = "Prestige Carry Weight per Rank (kg)",
+        "tooltip" = "Permanent carry weight bonus per Pack Mule prestige rank.",
+        "default" = 1, "value" = 1,
+        "minRange" = 0, "maxRange" = 10,
+        "menu_pos" = 35
+    })
+    _config.set_value("Int", "cfg_prestige_hunger", {
+        "name" = "Prestige Hunger Reduce per Rank (%)",
+        "tooltip" = "Permanent hunger drain reduction per Hunger Resist prestige rank.",
+        "default" = 2, "value" = 2,
+        "minRange" = 0, "maxRange" = 10,
+        "menu_pos" = 36
+    })
+    _config.set_value("Int", "cfg_prestige_thirst", {
+        "name" = "Prestige Thirst Reduce per Rank (%)",
+        "tooltip" = "Permanent thirst drain reduction per Thirst Resist prestige rank.",
+        "default" = 2, "value" = 2,
+        "minRange" = 0, "maxRange" = 10,
+        "menu_pos" = 37
+    })
+    _config.set_value("Int", "cfg_prestige_mental", {
+        "name" = "Prestige Mental Reduce per Rank (%)",
+        "tooltip" = "Permanent mental drain reduction per Iron Will prestige rank.",
+        "default" = 2, "value" = 2,
+        "minRange" = 0, "maxRange" = 10,
+        "menu_pos" = 38
+    })
+    _config.set_value("Float", "cfg_prestige_regen", {
+        "name" = "Prestige Regen HP/s per Rank",
+        "tooltip" = "Permanent passive HP regen per Regeneration prestige rank. Stacks additively on top of the skill tree. Default 0.005 means one prestige rank ≈ 25% of a skill level at the default base regen rate, matching the other prestige stats.",
+        "default" = 0.005, "value" = 0.005,
+        "minRange" = 0.0, "maxRange" = 0.1, "step" = 0.001,
+        "menu_pos" = 39
+    })
+    _config.set_value("Int", "cfg_prestige_coldres", {
+        "name" = "Prestige Cold Resist per Rank (%)",
+        "tooltip" = "Permanent cold drain reduction per Cold Resistance prestige rank.",
+        "default" = 2, "value" = 2,
+        "minRange" = 0, "maxRange" = 10,
+        "menu_pos" = 40
+    })
+    _config.set_value("Int", "cfg_prestige_stealth", {
+        "name" = "Prestige Stealth per Rank (%)",
+        "tooltip" = "Permanent AI hearing reduction per Stealth prestige rank. Note: Stealth is currently a no-op since v2.0 dropped the AI.gd override.",
+        "default" = 2, "value" = 2,
+        "minRange" = 0, "maxRange" = 10,
+        "menu_pos" = 41
+    })
+    _config.set_value("Int", "cfg_prestige_recoil", {
+        "name" = "Prestige Recoil Reduce per Rank (%)",
+        "tooltip" = "Permanent weapon recoil reduction per Recoil Control prestige rank.",
+        "default" = 2, "value" = 2,
+        "minRange" = 0, "maxRange" = 10,
+        "menu_pos" = 42
+    })
+    _config.set_value("Int", "cfg_prestige_speed", {
+        "name" = "Prestige Speed per Rank (%)",
+        "tooltip" = "Permanent movement speed bonus per Athleticism prestige rank.",
+        "default" = 1, "value" = 1,
+        "minRange" = 0, "maxRange" = 5,
+        "menu_pos" = 43
+    })
+    _config.set_value("Int", "cfg_prestige_scavenger", {
+        "name" = "Prestige Scavenger per Rank (%)",
+        "tooltip" = "Permanent extra loot chance per Scavenger prestige rank.",
+        "default" = 2, "value" = 2,
+        "minRange" = 0, "maxRange" = 10,
+        "menu_pos" = 44
+    })
+    _config.set_value("Int", "cfg_prestige_cap", {
+        "name" = "Prestige Rank Cap (non-Vitality)",
+        "tooltip" = "Maximum prestige ranks any non-Vitality skill can accumulate. Vitality (Max HP) is always uncapped.",
+        "default" = 10, "value" = 10,
+        "minRange" = 1, "maxRange" = 50,
+        "menu_pos" = 45
+    })
+
     if !FileAccess.file_exists(MCM_FILE_PATH + "/config.ini"):
         DirAccess.open("user://").make_dir_recursive(MCM_FILE_PATH)
         _config.save(MCM_FILE_PATH + "/config.ini")
     else:
+        # Migrate: cfg_regen_per_level (v2.2.3) and cfg_prestige_regen
+        # (v2.2.4) both switched from Int sliders to granular Float sliders
+        # and lowered their defaults. Strip the stale Int entries so MCM
+        # doesn't keep the old values and overwrite our new defaults on
+        # next save.
+        var _saved = ConfigFile.new()
+        if _saved.load(MCM_FILE_PATH + "/config.ini") == OK:
+            var changed := false
+            for stale_key in ["cfg_regen_per_level", "cfg_prestige_regen"]:
+                if _saved.has_section_key("Int", stale_key):
+                    _saved.erase_section_key("Int", stale_key)
+                    changed = true
+            if changed:
+                _saved.save(MCM_FILE_PATH + "/config.ini")
         _mcm_helpers.CheckConfigurationHasUpdated(MCM_MOD_ID, _config, MCM_FILE_PATH + "/config.ini")
         _config.load(MCM_FILE_PATH + "/config.ini")
 
@@ -826,12 +1103,33 @@ func _apply_mcm_config(config: ConfigFile):
     cfg_hunger_reduce = _mcm_val(config, "Int", "cfg_hunger_reduce", 8) / 100.0
     cfg_thirst_reduce = _mcm_val(config, "Int", "cfg_thirst_reduce", 8) / 100.0
     cfg_mental_reduce = _mcm_val(config, "Int", "cfg_mental_reduce", 8) / 100.0
-    cfg_regen_per_level = _mcm_val(config, "Int", "cfg_regen_per_level", 2) / 10.0
+    cfg_regen_per_level = float(_mcm_val(config, "Float", "cfg_regen_per_level", cfg_regen_per_level))
     cfg_coldres_reduce = _mcm_val(config, "Int", "cfg_coldres_reduce", 8) / 100.0
     cfg_stealth_reduce = _mcm_val(config, "Int", "cfg_stealth_reduce", 5) / 100.0
     cfg_recoil_reduce = _mcm_val(config, "Int", "cfg_recoil_reduce", 5) / 100.0
     cfg_speed_bonus = _mcm_val(config, "Int", "cfg_speed_bonus", 4) / 100.0
     cfg_scavenger_chance = _mcm_val(config, "Int", "cfg_scavenger_chance", 5) / 100.0
+    # Prestige
+    cfg_prestige_enabled = _mcm_val(config, "Bool", "cfg_prestige_enabled", cfg_prestige_enabled)
+    cfg_prestige_reset_on_death = _mcm_val(config, "Bool", "cfg_prestige_reset_on_death", cfg_prestige_reset_on_death)
+    cfg_prestige_hp = float(_mcm_val(config, "Int", "cfg_prestige_hp", 3))
+    cfg_prestige_stamina = _mcm_val(config, "Int", "cfg_prestige_stamina", 3) / 100.0
+    cfg_prestige_carry = float(_mcm_val(config, "Int", "cfg_prestige_carry", 1))
+    cfg_prestige_hunger = _mcm_val(config, "Int", "cfg_prestige_hunger", 2) / 100.0
+    cfg_prestige_thirst = _mcm_val(config, "Int", "cfg_prestige_thirst", 2) / 100.0
+    cfg_prestige_mental = _mcm_val(config, "Int", "cfg_prestige_mental", 2) / 100.0
+    cfg_prestige_regen = float(_mcm_val(config, "Float", "cfg_prestige_regen", cfg_prestige_regen))
+    cfg_prestige_coldres = _mcm_val(config, "Int", "cfg_prestige_coldres", 2) / 100.0
+    cfg_prestige_stealth = _mcm_val(config, "Int", "cfg_prestige_stealth", 2) / 100.0
+    cfg_prestige_recoil = _mcm_val(config, "Int", "cfg_prestige_recoil", 2) / 100.0
+    cfg_prestige_speed = _mcm_val(config, "Int", "cfg_prestige_speed", 1) / 100.0
+    cfg_prestige_scavenger = _mcm_val(config, "Int", "cfg_prestige_scavenger", 2) / 100.0
+    # Rebuild caps array from the single non-Vitality cap slider. Vitality
+    # stays uncapped (-1); every other slot uses the MCM value.
+    var shared_cap = int(_mcm_val(config, "Int", "cfg_prestige_cap", 10))
+    cfg_prestige_caps = [-1]
+    for _i in range(skill_ids.size() - 1):
+        cfg_prestige_caps.append(shared_cap)
 
 # --- Fallback config (used when MCM is not installed) ---
 
@@ -850,7 +1148,7 @@ func LoadConfig():
         cfg_hunger_reduce = cfg.get_value("bonuses", "hunger_reduce", 0.08)
         cfg_thirst_reduce = cfg.get_value("bonuses", "thirst_reduce", 0.08)
         cfg_mental_reduce = cfg.get_value("bonuses", "mental_reduce", 0.08)
-        cfg_regen_per_level = cfg.get_value("bonuses", "regen_per_level", 0.2)
+        cfg_regen_per_level = cfg.get_value("bonuses", "regen_per_level", 0.02)
         cfg_coldres_reduce = cfg.get_value("bonuses", "coldres_reduce", 0.08)
         cfg_stealth_reduce = cfg.get_value("bonuses", "stealth_reduce", 0.05)
         cfg_recoil_reduce = cfg.get_value("bonuses", "recoil_reduce", 0.05)
@@ -976,6 +1274,10 @@ func LoadXP():
             for trader_name in cfg.get_section_keys("trader_task_counts"):
                 cfg_trader_task_counts[trader_name] = cfg.get_value("trader_task_counts", trader_name, 0)
     _last_xp_path = path
+    # Prestige lives in its own file so it survives ResetXP. Load it here
+    # so the active profile's prestige ranks are in memory for Character.gd
+    # and the UI to read.
+    _load_prestige()
     _sync_to_gamedata()
 
 func _zero_xp_state():
@@ -1001,6 +1303,13 @@ func ResetXP():
     var path = _get_xp_data_path()
     if FileAccess.file_exists(path):
         DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+    # Prestige normally survives death. The MCM hardcore toggle opts in to
+    # also wiping prestige on every death reset.
+    if cfg_prestige_reset_on_death:
+        prestige_counts.clear()
+        var pp = _get_prestige_path()
+        if FileAccess.file_exists(pp):
+            DirAccess.remove_absolute(ProjectSettings.globalize_path(pp))
     _sync_to_gamedata()
 
 func _ensure_marker():

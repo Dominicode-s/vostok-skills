@@ -1,5 +1,32 @@
 # XP & Skills System — Changelog
 
+### v2.2.4
+- **Rebalanced prestige Regen bonus to match v2.2.3's lowered base regen.** When base regen dropped from 0.20 to 0.02 HP/s per skill level, the old prestige regen default of +0.05 HP/s per rank became wildly strong relative to a skill level (~250% instead of the intended ~25%). Prestige Regen default is now 0.005 HP/s per rank, matching the ~25% of a skill level ratio that the other prestige stats (Vitality, Pack Mule, etc.) use.
+- Prestige Regen MCM entry is now a Float slider with 0.001 HP/s precision (range 0.000–0.100), consistent with the base regen slider from v2.2.3.
+- Migration: the stale Int entry for `cfg_prestige_regen` is automatically erased from the saved MCM config on load, same pattern as the v2.2.3 migration for base regen.
+
+### v2.2.3
+- **Regen slider is now a granular Float slider with 0.01 HP/s precision.** Previously it was an integer slider in "×0.1 HP/s" steps, which meant the lowest non-zero setting was 0.1 HP/s per level — too fast for players who wanted a gentle passive trickle. You can now set anything from 0.00 (disabled) to 2.00 HP/s per Regeneration skill level, in 0.01 increments.
+- **Default regen lowered from 0.2 to 0.02 HP/s per level.** Fully maxed Regeneration (skill level 5) now passively heals 0.10 HP/s — roughly 17 minutes to heal 100 HP. Players who preferred the old aggressive regen can simply crank the slider back up.
+- Migration: any existing `Int` entry for `cfg_regen_per_level` in your saved MCM config is automatically erased on load, so the new Float default applies cleanly without a leftover phantom value from the old schema.
+- Cosmetic: the Skills UI description line for Regeneration now renders the value as "+0.02 HP/sec Regen" (two decimal places) instead of relying on raw `str()` which could show float-precision noise.
+
+### v2.2.2
+- **Compatibility with mods that override Character.gd's Health() function** (e.g. injuries-system-rework) — our `Health()` no longer reimplements the damage block line-for-line. It now calls `super(delta)` to delegate damage to whatever is next in the override chain (base game, or another mod sitting between us and the base). This means other mods' custom damage tuning (bleeding timers, fracture-while-running, rupture/headshot behaviour, etc.) actually runs when both mods are installed together, instead of being silently skipped because our non-super reimplementation was blocking them.
+- To avoid double-applied regen, `gameData.xpRegen` is temporarily zeroed across the `super()` call so the base game's hardcoded `xpRegen * 0.2` regen block short-circuits — our own configurable `cfg_regen_per_level` + prestige regen is then applied once, after super, exactly as before.
+- No behaviour change in vanilla (no other Character.gd mod installed): all base damage conditions still apply via super → base, and our regen + prestige bonus runs on top just like in v2.2.1.
+
+### v2.2.1
+- Fixed prestige ranks persisting into a new game. The new-game detection path (marker file wiped by FormatSave) was only calling ResetXP, which preserves prestige by design so it survives regular death. New game is unambiguous so it now also clears prestige_counts and deletes the XPPrestige file regardless of the "Reset Prestige on Death" toggle.
+
+### v2.2.0
+- **Added: Prestige system** — once every enabled skill is at its max level, a new Prestige button appears at the bottom of the Skills panel. Clicking it opens a picker modal where you choose one stat; confirming wipes all XP and skill levels in exchange for a permanent rank in that stat that stacks additively on top of the regular skill tree.
+- Prestige bonuses are separate from skill levels: they don't get baked into your skill count, they're a permanent baseline that everything else builds on top of. A Vitality prestige rank 3 character with Vitality skill level 10 gets +15 HP from skill (10 × 5) + 9 HP from prestige (3 × 3) = +24 HP on top of the 100 base.
+- **Vitality (max HP) is uncapped** — keep prestiging it as much as you want. Every other skill caps at 10 prestige ranks by default to keep late-game balance sane.
+- Stored separately at `user://XPPrestige_<profile>.cfg` so death reset and ResetXP don't touch prestige. Profile-aware (follows Patty's Profiles just like XPData does). Works across map/shelter transitions.
+- Each skill row now shows a **✦N** badge next to its level when that skill has prestige ranks.
+- New MCM options: enable/disable prestige, per-stat bonus magnitudes, shared cap for non-Vitality skills, and a hardcore "Reset Prestige on Death" toggle.
+
 ### v2.1.0
 - **Compatibility with Patty's Profiles** — XP/skill state is now saved per-profile at `user://XPData_<profile>.cfg`. Each profile keeps its own progression, death reset only affects the active profile, and switching profiles in the menu reloads the correct state on next game start. First-time Patty install automatically migrates existing `XPData.cfg` into the active profile
 - **Container Search XP now supports fractional values** (0.1–5.0 in 0.1 steps) — the MCM slider has been moved to a Float control, and partial XP accumulates across containers (e.g. 0.3 per container awards 1 XP every ~4 containers searched). Progress persists across sessions
