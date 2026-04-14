@@ -90,7 +90,7 @@ var cfg_carry_per_level: float = 2.0
 var cfg_hunger_reduce: float = 0.08
 var cfg_thirst_reduce: float = 0.08
 var cfg_mental_reduce: float = 0.08
-var cfg_regen_per_level: float = 0.2
+var cfg_regen_per_level: float = 0.02
 var cfg_coldres_reduce: float = 0.08
 var cfg_stealth_reduce: float = 0.05
 var cfg_recoil_reduce: float = 0.05
@@ -895,11 +895,11 @@ func _register_mcm():
         "minRange" = 1, "maxRange" = 20,
         "menu_pos" = 24
     })
-    _config.set_value("Int", "cfg_regen_per_level", {
-        "name" = "Regen Per Level (×0.1 HP/s)",
-        "tooltip" = "HP/sec passive regeneration per Regeneration level (2 = 0.2 HP/s per level)",
-        "default" = 2, "value" = 2,
-        "minRange" = 1, "maxRange" = 20,
+    _config.set_value("Float", "cfg_regen_per_level", {
+        "name" = "Regen HP/s per Level",
+        "tooltip" = "Passive HP regen per Regeneration skill level. Granular (0.01 steps) so you can tune it to taste. Default 0.02 means fully maxed Regen (skill 5) = 0.10 HP/s — about 17 minutes to heal from 0 to 100. Set to 0 to disable regen entirely.",
+        "default" = 0.02, "value" = 0.02,
+        "minRange" = 0.0, "maxRange" = 2.0, "step" = 0.01,
         "menu_pos" = 25
     })
     _config.set_value("Int", "cfg_coldres_reduce", {
@@ -1047,6 +1047,15 @@ func _register_mcm():
         DirAccess.open("user://").make_dir_recursive(MCM_FILE_PATH)
         _config.save(MCM_FILE_PATH + "/config.ini")
     else:
+        # Migrate: cfg_regen_per_level used to be an Int slider (×0.1 HP/s
+        # steps). v2.2.3 switched it to a Float slider with 0.01 steps.
+        # Strip the stale Int entry so MCM doesn't keep the old value and
+        # overwrite our new granular default on next save.
+        var _saved = ConfigFile.new()
+        if _saved.load(MCM_FILE_PATH + "/config.ini") == OK:
+            if _saved.has_section_key("Int", "cfg_regen_per_level"):
+                _saved.erase_section_key("Int", "cfg_regen_per_level")
+                _saved.save(MCM_FILE_PATH + "/config.ini")
         _mcm_helpers.CheckConfigurationHasUpdated(MCM_MOD_ID, _config, MCM_FILE_PATH + "/config.ini")
         _config.load(MCM_FILE_PATH + "/config.ini")
 
@@ -1089,7 +1098,7 @@ func _apply_mcm_config(config: ConfigFile):
     cfg_hunger_reduce = _mcm_val(config, "Int", "cfg_hunger_reduce", 8) / 100.0
     cfg_thirst_reduce = _mcm_val(config, "Int", "cfg_thirst_reduce", 8) / 100.0
     cfg_mental_reduce = _mcm_val(config, "Int", "cfg_mental_reduce", 8) / 100.0
-    cfg_regen_per_level = _mcm_val(config, "Int", "cfg_regen_per_level", 2) / 10.0
+    cfg_regen_per_level = float(_mcm_val(config, "Float", "cfg_regen_per_level", cfg_regen_per_level))
     cfg_coldres_reduce = _mcm_val(config, "Int", "cfg_coldres_reduce", 8) / 100.0
     cfg_stealth_reduce = _mcm_val(config, "Int", "cfg_stealth_reduce", 5) / 100.0
     cfg_recoil_reduce = _mcm_val(config, "Int", "cfg_recoil_reduce", 5) / 100.0
@@ -1134,7 +1143,7 @@ func LoadConfig():
         cfg_hunger_reduce = cfg.get_value("bonuses", "hunger_reduce", 0.08)
         cfg_thirst_reduce = cfg.get_value("bonuses", "thirst_reduce", 0.08)
         cfg_mental_reduce = cfg.get_value("bonuses", "mental_reduce", 0.08)
-        cfg_regen_per_level = cfg.get_value("bonuses", "regen_per_level", 0.2)
+        cfg_regen_per_level = cfg.get_value("bonuses", "regen_per_level", 0.02)
         cfg_coldres_reduce = cfg.get_value("bonuses", "coldres_reduce", 0.08)
         cfg_stealth_reduce = cfg.get_value("bonuses", "stealth_reduce", 0.05)
         cfg_recoil_reduce = cfg.get_value("bonuses", "recoil_reduce", 0.05)

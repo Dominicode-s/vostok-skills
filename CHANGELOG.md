@@ -1,5 +1,11 @@
 # XP & Skills System — Changelog
 
+### v2.2.3
+- **Regen slider is now a granular Float slider with 0.01 HP/s precision.** Previously it was an integer slider in "×0.1 HP/s" steps, which meant the lowest non-zero setting was 0.1 HP/s per level — too fast for players who wanted a gentle passive trickle. You can now set anything from 0.00 (disabled) to 2.00 HP/s per Regeneration skill level, in 0.01 increments.
+- **Default regen lowered from 0.2 to 0.02 HP/s per level.** Fully maxed Regeneration (skill level 5) now passively heals 0.10 HP/s — roughly 17 minutes to heal 100 HP. Players who preferred the old aggressive regen can simply crank the slider back up.
+- Migration: any existing `Int` entry for `cfg_regen_per_level` in your saved MCM config is automatically erased on load, so the new Float default applies cleanly without a leftover phantom value from the old schema.
+- Cosmetic: the Skills UI description line for Regeneration now renders the value as "+0.02 HP/sec Regen" (two decimal places) instead of relying on raw `str()` which could show float-precision noise.
+
 ### v2.2.2
 - **Compatibility with mods that override Character.gd's Health() function** (e.g. injuries-system-rework) — our `Health()` no longer reimplements the damage block line-for-line. It now calls `super(delta)` to delegate damage to whatever is next in the override chain (base game, or another mod sitting between us and the base). This means other mods' custom damage tuning (bleeding timers, fracture-while-running, rupture/headshot behaviour, etc.) actually runs when both mods are installed together, instead of being silently skipped because our non-super reimplementation was blocking them.
 - To avoid double-applied regen, `gameData.xpRegen` is temporarily zeroed across the `super()` call so the base game's hardcoded `xpRegen * 0.2` regen block short-circuits — our own configurable `cfg_regen_per_level` + prestige regen is then applied once, after super, exactly as before.

@@ -307,7 +307,7 @@ func RefreshSkillDescs():
         "-" + str(int(xp_mod.cfg_hunger_reduce * 100)) + "% Hunger Drain",
         "-" + str(int(xp_mod.cfg_thirst_reduce * 100)) + "% Thirst Drain",
         "-" + str(int(xp_mod.cfg_mental_reduce * 100)) + "% Mental Drain",
-        "+" + str(xp_mod.cfg_regen_per_level) + " HP/sec Regen",
+        "+" + ("%.2f" % xp_mod.cfg_regen_per_level) + " HP/sec Regen",
         "-" + str(int(xp_mod.cfg_coldres_reduce * 100)) + "% Cold Drain",
         "-" + str(int(xp_mod.cfg_stealth_reduce * 100)) + "% AI Hearing Range",
         "-" + str(int(xp_mod.cfg_recoil_reduce * 100)) + "% Weapon Recoil",
