@@ -1,5 +1,11 @@
 # XP & Skills System — Changelog
 
+### v2.3.0
+- **New skill: Composure** — reduces camera shake when taking damage, similar to an aim-punch modifier. Each level trims 10% off the rotation `Damage.gd` applies to the camera rig on hit, maxing out at 50% reduction after 5 levels. Prestigable like any other skill (2% per rank, cap 10).
+- Applied non-intrusively — no new script override. Main.gd caches the hit-shake `Node3D` via the existing `node_added` hook and scales `rotation` in a `_physics_process` with `process_physics_priority = 10`, so Damage.gd's own computation runs first and ours scales the result. Mods that *do* override `res://Scripts/Damage.gd` (e.g. aim-punch modifier) continue to work — our dampener just scales whatever rotation that override produced.
+- Exposed in MCM: **Enable Composure** toggle, **Composure Shake Reduce Per Level (%)**, and **Prestige Composure per Rank (%)**.
+- No migration needed — new skill defaults to level 0, so existing saves behave identically until the player spends XP on it.
+
 ### v2.2.4
 - **Rebalanced prestige Regen bonus to match v2.2.3's lowered base regen.** When base regen dropped from 0.20 to 0.02 HP/s per skill level, the old prestige regen default of +0.05 HP/s per rank became wildly strong relative to a skill level (~250% instead of the intended ~25%). Prestige Regen default is now 0.005 HP/s per rank, matching the ~25% of a skill level ratio that the other prestige stats (Vitality, Pack Mule, etc.) use.
 - Prestige Regen MCM entry is now a Float slider with 0.001 HP/s precision (range 0.000–0.100), consistent with the base regen slider from v2.2.3.

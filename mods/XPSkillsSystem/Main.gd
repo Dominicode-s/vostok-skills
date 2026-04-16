@@ -50,6 +50,10 @@ var _controller_base_sprint: float = 5.0
 var _sfx_search: AudioStreamMP3
 var _sfx_door: AudioStreamMP3
 
+# Composure — cache the hit-shake Node3D (runs res://Scripts/Damage.gd) so we
+# can dampen its rotation in _physics_process without overriding the script.
+var _damage_node: Node3D = null
+
 # Recoil — weapon rigs are preloaded in Database.gd so take_over_path can't
 # replace the script. Instead we modify recoil data values when equipped.
 
@@ -68,6 +72,7 @@ var xpStealth: int = 0
 var xpRecoil: int = 0
 var xpSpeed: int = 0
 var xpScavenger: int = 0
+var xpComposure: int = 0
 
 # Config — XP rewards
 var cfg_xp_container: float = 1.0
@@ -96,20 +101,22 @@ var cfg_stealth_reduce: float = 0.05
 var cfg_recoil_reduce: float = 0.05
 var cfg_speed_bonus: float = 0.04
 var cfg_scavenger_chance: float = 0.05
+var cfg_shake_reduce: float = 0.10
 
 # Config — Skill max levels
-var cfg_max_levels: Array = [10, 10, 10, 10, 10, 10, 5, 10, 10, 10, 5, 5]
+var cfg_max_levels: Array = [10, 10, 10, 10, 10, 10, 5, 10, 10, 10, 5, 5, 5]
 
 # Config — Skill cost bases
-var cfg_cost_bases: Array = [25, 25, 20, 20, 20, 20, 50, 20, 25, 25, 30, 30]
+var cfg_cost_bases: Array = [25, 25, 20, 20, 20, 20, 50, 20, 25, 25, 30, 30, 25]
 
 # Config — Skill enabled toggles (index matches skill order)
-var skill_ids: Array = ["vitality", "endurance", "pack_mule", "hunger_resist", "thirst_resist", "iron_will", "regeneration", "cold_resistance", "stealth", "recoil_control", "athleticism", "scavenger"]
+var skill_ids: Array = ["vitality", "endurance", "pack_mule", "hunger_resist", "thirst_resist", "iron_will", "regeneration", "cold_resistance", "stealth", "recoil_control", "athleticism", "scavenger", "composure"]
 var cfg_skill_enabled: Dictionary = {
 	"vitality": true, "endurance": true, "pack_mule": true,
 	"hunger_resist": true, "thirst_resist": true, "iron_will": true,
 	"regeneration": true, "cold_resistance": true, "stealth": true,
-	"recoil_control": true, "athleticism": true, "scavenger": true
+	"recoil_control": true, "athleticism": true, "scavenger": true,
+	"composure": true
 }
 
 # ─── Prestige ─────────────────────────────────────────────────
@@ -138,10 +145,11 @@ var cfg_prestige_stealth: float = 0.02  # Stealth: -2% (no-op, kept for consiste
 var cfg_prestige_recoil: float = 0.02   # Recoil: -2% recoil
 var cfg_prestige_speed: float = 0.01    # Athleticism: +1% speed
 var cfg_prestige_scavenger: float = 0.02  # Scavenger: +2% loot chance
+var cfg_prestige_composure: float = 0.02  # Composure: -2% camera shake
 
 # Per-skill prestige rank caps. -1 = unlimited (only Vitality by default).
 # Order matches skill_ids.
-var cfg_prestige_caps: Array = [-1, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10]
+var cfg_prestige_caps: Array = [-1, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10]
 
 # Runtime prestige state — skill_id -> rank count.
 var prestige_counts: Dictionary = {}
@@ -153,6 +161,9 @@ const MCM_MOD_ID = "XPSkillsSystem"
 
 func _ready():
     Engine.set_meta("XPMain", self)
+    # Run _physics_process AFTER Damage.gd's so our Composure dampening scales
+    # the rotation it just wrote. process_physics_priority: higher = later.
+    process_physics_priority = 10
     # Rewrite any pre-v2.0 marker with a clean Resource. Older versions may
     # have saved a custom resource referencing override scripts that v2.0+
     # deleted, which caused script-load crashes on boot.
@@ -322,6 +333,14 @@ func _on_node_added(node: Node):
     if node is Node3D and node.name == "Recoil" and node.has_method("ApplyRecoil"):
         _apply_recoil_reduction.call_deferred(node)
         return
+
+    # Composure — cache the camera hit-shake node so _physics_process can
+    # scale its rotation without needing a Damage.gd override.
+    if node is Node3D:
+        var s: Script = node.get_script()
+        if s and s.resource_path == "res://Scripts/Damage.gd":
+            _damage_node = node
+            return
 
     # AI tracking for kill XP — broadened detection for modded AI classes
     # that may not declare `boss` (e.g. custom factions).
@@ -658,6 +677,26 @@ func _reset_session_state():
     _controller_ref = null
     _trade_btn = null
     _trade_connected = false
+    _damage_node = null
+
+# --- Compat: Composure (reduces camera shake on hits) ---
+
+func _physics_process(_delta):
+    # Scale down the rotation Damage.gd just wrote when the player has
+    # Composure skill or prestige ranks. We run after Damage.gd thanks to
+    # process_physics_priority, so rotation already holds this frame's value.
+    if gameData.menu or gameData.shelter:
+        return
+    if not gameData.damage and not gameData.impact:
+        return
+    var level = get_level(12)
+    var prestige_bonus = prestige_composure_bonus()
+    if level <= 0 and prestige_bonus <= 0.0:
+        return
+    if not _damage_node or not is_instance_valid(_damage_node):
+        return
+    var mult = maxf(1.0 - (level * cfg_shake_reduce) - prestige_bonus, 0.05)
+    _damage_node.rotation *= mult
 
 func get_level(index: int) -> int:
     if not is_skill_enabled(index):
@@ -675,6 +714,7 @@ func get_level(index: int) -> int:
         9: return xpRecoil
         10: return xpSpeed
         11: return xpScavenger
+        12: return xpComposure
     return 0
 
 # ─── Prestige helpers ─────────────────────────────────────────
@@ -770,6 +810,9 @@ func prestige_speed_bonus() -> float:
 func prestige_scavenger_bonus() -> float:
     return get_prestige_count(11) * cfg_prestige_scavenger
 
+func prestige_composure_bonus() -> float:
+    return get_prestige_count(12) * cfg_prestige_composure
+
 func _get_prestige_path() -> String:
     var profile = _get_active_profile()
     if profile.is_empty():
@@ -801,7 +844,7 @@ func _try_load_mcm():
 func _register_mcm():
     var _config = ConfigFile.new()
 
-    var skill_names_display = ["Vitality", "Endurance", "Pack Mule", "Hunger Resist", "Thirst Resist", "Iron Will", "Regeneration", "Cold Resistance", "Stealth", "Recoil Control", "Athleticism", "Scavenger"]
+    var skill_names_display = ["Vitality", "Endurance", "Pack Mule", "Hunger Resist", "Thirst Resist", "Iron Will", "Regeneration", "Cold Resistance", "Stealth", "Recoil Control", "Athleticism", "Scavenger", "Composure"]
     var menu_pos = 1
     for i in skill_ids.size():
         _config.set_value("Bool", "cfg_skill_" + skill_ids[i], {
@@ -937,6 +980,13 @@ func _register_mcm():
         "minRange" = 1, "maxRange" = 15,
         "menu_pos" = 30
     })
+    _config.set_value("Int", "cfg_shake_reduce", {
+        "name" = "Composure Shake Reduce Per Level (%)",
+        "tooltip" = "Camera shake reduction when taking damage per Composure level (10 = 10% per level). Fully maxed at 5 levels reduces hit shake by 50%.",
+        "default" = 10, "value" = 10,
+        "minRange" = 1, "maxRange" = 20,
+        "menu_pos" = 30.5
+    })
 
     # ─── Prestige ───
     _config.set_value("Bool", "cfg_prestige_enabled", {
@@ -1035,6 +1085,13 @@ func _register_mcm():
         "minRange" = 0, "maxRange" = 10,
         "menu_pos" = 44
     })
+    _config.set_value("Int", "cfg_prestige_composure", {
+        "name" = "Prestige Composure per Rank (%)",
+        "tooltip" = "Permanent camera shake reduction per Composure prestige rank.",
+        "default" = 2, "value" = 2,
+        "minRange" = 0, "maxRange" = 10,
+        "menu_pos" = 44.5
+    })
     _config.set_value("Int", "cfg_prestige_cap", {
         "name" = "Prestige Rank Cap (non-Vitality)",
         "tooltip" = "Maximum prestige ranks any non-Vitality skill can accumulate. Vitality (Max HP) is always uncapped.",
@@ -1109,6 +1166,7 @@ func _apply_mcm_config(config: ConfigFile):
     cfg_recoil_reduce = _mcm_val(config, "Int", "cfg_recoil_reduce", 5) / 100.0
     cfg_speed_bonus = _mcm_val(config, "Int", "cfg_speed_bonus", 4) / 100.0
     cfg_scavenger_chance = _mcm_val(config, "Int", "cfg_scavenger_chance", 5) / 100.0
+    cfg_shake_reduce = _mcm_val(config, "Int", "cfg_shake_reduce", 10) / 100.0
     # Prestige
     cfg_prestige_enabled = _mcm_val(config, "Bool", "cfg_prestige_enabled", cfg_prestige_enabled)
     cfg_prestige_reset_on_death = _mcm_val(config, "Bool", "cfg_prestige_reset_on_death", cfg_prestige_reset_on_death)
@@ -1124,6 +1182,7 @@ func _apply_mcm_config(config: ConfigFile):
     cfg_prestige_recoil = _mcm_val(config, "Int", "cfg_prestige_recoil", 2) / 100.0
     cfg_prestige_speed = _mcm_val(config, "Int", "cfg_prestige_speed", 1) / 100.0
     cfg_prestige_scavenger = _mcm_val(config, "Int", "cfg_prestige_scavenger", 2) / 100.0
+    cfg_prestige_composure = _mcm_val(config, "Int", "cfg_prestige_composure", 2) / 100.0
     # Rebuild caps array from the single non-Vitality cap slider. Vitality
     # stays uncapped (-1); every other slot uses the MCM value.
     var shared_cap = int(_mcm_val(config, "Int", "cfg_prestige_cap", 10))
@@ -1154,12 +1213,13 @@ func LoadConfig():
         cfg_recoil_reduce = cfg.get_value("bonuses", "recoil_reduce", 0.05)
         cfg_speed_bonus = cfg.get_value("bonuses", "speed_bonus", 0.04)
         cfg_scavenger_chance = cfg.get_value("bonuses", "scavenger_chance", 0.05)
+        cfg_shake_reduce = cfg.get_value("bonuses", "shake_reduce", 0.10)
         for sid in skill_ids:
             cfg_skill_enabled[sid] = cfg.get_value("toggles", sid, true)
-        var ml = cfg.get_value("skills", "max_levels", "10,10,10,10,10,10,5,10,10,10,5,5")
-        var cb = cfg.get_value("skills", "cost_bases", "25,25,20,20,20,20,50,20,25,25,30,30")
-        cfg_max_levels = _parse_int_list(ml, [10, 10, 10, 10, 10, 10, 5, 10, 10, 10, 5, 5])
-        cfg_cost_bases = _parse_int_list(cb, [25, 25, 20, 20, 20, 20, 50, 20, 25, 25, 30, 30])
+        var ml = cfg.get_value("skills", "max_levels", "10,10,10,10,10,10,5,10,10,10,5,5,5")
+        var cb = cfg.get_value("skills", "cost_bases", "25,25,20,20,20,20,50,20,25,25,30,30,25")
+        cfg_max_levels = _parse_int_list(ml, [10, 10, 10, 10, 10, 10, 5, 10, 10, 10, 5, 5, 5])
+        cfg_cost_bases = _parse_int_list(cb, [25, 25, 20, 20, 20, 20, 50, 20, 25, 25, 30, 30, 25])
     else:
         SaveConfig()
 
@@ -1183,6 +1243,7 @@ func SaveConfig():
     cfg.set_value("bonuses", "recoil_reduce", cfg_recoil_reduce)
     cfg.set_value("bonuses", "speed_bonus", cfg_speed_bonus)
     cfg.set_value("bonuses", "scavenger_chance", cfg_scavenger_chance)
+    cfg.set_value("bonuses", "shake_reduce", cfg_shake_reduce)
     for sid in skill_ids:
         cfg.set_value("toggles", sid, cfg_skill_enabled[sid])
     var ml = ",".join(cfg_max_levels.map(func(v): return str(v)))
@@ -1217,6 +1278,7 @@ func SaveXP():
     cfg.set_value("xp", "xpRecoil", xpRecoil)
     cfg.set_value("xp", "xpSpeed", xpSpeed)
     cfg.set_value("xp", "xpScavenger", xpScavenger)
+    cfg.set_value("xp", "xpComposure", xpComposure)
     cfg.set_value("xp", "container_fraction", _container_xp_fraction)
     for trader_name in cfg_trader_task_counts.keys():
         cfg.set_value("trader_task_counts", trader_name, cfg_trader_task_counts[trader_name])
@@ -1269,6 +1331,7 @@ func LoadXP():
         xpRecoil = cfg.get_value("xp", "xpRecoil", 0)
         xpSpeed = cfg.get_value("xp", "xpSpeed", 0)
         xpScavenger = cfg.get_value("xp", "xpScavenger", 0)
+        xpComposure = cfg.get_value("xp", "xpComposure", 0)
         _container_xp_fraction = float(cfg.get_value("xp", "container_fraction", 0.0))
         if cfg.has_section("trader_task_counts"):
             for trader_name in cfg.get_section_keys("trader_task_counts"):
@@ -1295,6 +1358,7 @@ func _zero_xp_state():
     xpRecoil = 0
     xpSpeed = 0
     xpScavenger = 0
+    xpComposure = 0
     _container_xp_fraction = 0.0
     cfg_trader_task_counts.clear()
 
