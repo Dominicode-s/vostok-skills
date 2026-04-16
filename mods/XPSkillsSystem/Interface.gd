@@ -4,11 +4,11 @@ var skillsButton: Button
 var skillsUI: Control
 var skillsXPLabel: Label
 var skillRows: Array = []
-var skillNames = ["Vitality", "Endurance", "Pack Mule", "Hunger Resist", "Thirst Resist", "Iron Will", "Regeneration", "Cold Resistance", "Stealth", "Recoil Control", "Athleticism", "Scavenger"]
-var skillKeys = ["xpHealth", "xpStamina", "xpCarry", "xpHunger", "xpThirst", "xpMental", "xpRegen", "xpColdRes", "xpStealth", "xpRecoil", "xpSpeed", "xpScavenger"]
-var skillMax = [10, 10, 10, 10, 10, 10, 5, 10, 10, 10, 5, 5]
-var skillCostBase = [25, 25, 20, 20, 20, 20, 50, 20, 25, 25, 30, 30]
-var skillDescs = ["+5 Max HP", "-10% Stamina Drain", "+2kg Carry Weight", "-8% Hunger Drain", "-8% Thirst Drain", "-8% Mental Drain", "+0.2 HP/sec Regen", "-8% Cold Drain", "-5% AI Hearing Range", "-5% Weapon Recoil", "+4% Movement Speed", "+5% Loot Chance (better at higher levels)"]
+var skillNames = ["Vitality", "Endurance", "Pack Mule", "Hunger Resist", "Thirst Resist", "Iron Will", "Regeneration", "Cold Resistance", "Stealth", "Recoil Control", "Athleticism", "Scavenger", "Composure"]
+var skillKeys = ["xpHealth", "xpStamina", "xpCarry", "xpHunger", "xpThirst", "xpMental", "xpRegen", "xpColdRes", "xpStealth", "xpRecoil", "xpSpeed", "xpScavenger", "xpComposure"]
+var skillMax = [10, 10, 10, 10, 10, 10, 5, 10, 10, 10, 5, 5, 5]
+var skillCostBase = [25, 25, 20, 20, 20, 20, 50, 20, 25, 25, 30, 30, 25]
+var skillDescs = ["+5 Max HP", "-10% Stamina Drain", "+2kg Carry Weight", "-8% Hunger Drain", "-8% Thirst Drain", "-8% Mental Drain", "+0.2 HP/sec Regen", "-8% Cold Drain", "-5% AI Hearing Range", "-5% Weapon Recoil", "+4% Movement Speed", "+5% Loot Chance (better at higher levels)", "-10% Camera Shake From Hits"]
 var skillsBuilt = false
 var skillDescLabels: Array = []
 var _xp_refresh_timer: float = 0.0
@@ -299,7 +299,7 @@ func RebuildSkills():
 
 func RefreshSkillDescs():
     var xp_mod = Engine.get_meta("XPMain", null)
-    if !xp_mod or skillDescLabels.size() < 12: return
+    if !xp_mod or skillDescLabels.size() < 13: return
     var descs = [
         "+" + str(xp_mod.cfg_hp_per_level) + " Max HP",
         "-" + str(int(xp_mod.cfg_stamina_reduce * 100)) + "% Stamina Drain",
@@ -312,7 +312,8 @@ func RefreshSkillDescs():
         "-" + str(int(xp_mod.cfg_stealth_reduce * 100)) + "% AI Hearing Range",
         "-" + str(int(xp_mod.cfg_recoil_reduce * 100)) + "% Weapon Recoil",
         "+" + str(int(xp_mod.cfg_speed_bonus * 100)) + "% Movement Speed",
-        "+" + str(int(xp_mod.cfg_scavenger_chance * 100)) + "% Extra Loot Chance"
+        "+" + str(int(xp_mod.cfg_scavenger_chance * 100)) + "% Extra Loot Chance",
+        "-" + str(int(xp_mod.cfg_shake_reduce * 100)) + "% Camera Shake From Hits"
     ]
     for i in descs.size():
         if skillDescLabels[i] != null:
@@ -368,6 +369,7 @@ func GetSkillLevel(index: int) -> int:
         9: return xp_mod.xpRecoil
         10: return xp_mod.xpSpeed
         11: return xp_mod.xpScavenger
+        12: return xp_mod.xpComposure
     return 0
 
 func SetSkillLevel(index: int, value: int):
@@ -386,6 +388,7 @@ func SetSkillLevel(index: int, value: int):
         9: xp_mod.xpRecoil = value
         10: xp_mod.xpSpeed = value
         11: xp_mod.xpScavenger = value
+        12: xp_mod.xpComposure = value
 
 func UpdateSkillsUI():
     if !skillsXPLabel: return
