@@ -127,6 +127,12 @@ func Death():
         xp_mod.ResetXP()
     super()
 
+func Consume(item: ItemData):
+    # super() so mods sitting between us and the base game still run.
+    super(item)
+    if xp_mod:
+        xp_mod.award_skillbook_xp(item)
+
 func Temperature(delta):
     if gameData.season == 1 || gameData.shelter || gameData.tutorial || gameData.heat:
         gameData.temperature += delta

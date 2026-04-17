@@ -103,6 +103,41 @@ var cfg_speed_bonus: float = 0.04
 var cfg_scavenger_chance: float = 0.05
 var cfg_shake_reduce: float = 0.10
 
+# Skill Books — 9 dedicated items built at runtime from SKILLBOOK_DEFS.
+# Reuses the vanilla MS_Book mesh with a per-book tinted material so we
+# don't ship .obj files; inventory icons are generated procedurally as
+# placeholders (real art can be dropped in mods/XPSkillsSystem/Books/
+# <file>_icon.png later without code changes).
+var cfg_skillbooks_enabled: bool = true
+var cfg_skillbook_base_xp: int = 200
+var cfg_skillbook_dual_multiplier: float = 0.6
+
+const SKILLBOOK_PREFIX: String = "XPSkillbook_"
+
+# Every skill book ships as a Rare civilian-loot item. The color tints both
+# the 3D cover material and the placeholder inventory icon.
+const SKILLBOOK_DEFS: Array = [
+    {"file": "Fitness",      "name": "Fitness Manual",            "skills": ["pack_mule"],                      "color": Color(0.80, 0.30, 0.20)},
+    {"file": "Athletic",     "name": "Athletic Training Guide",   "skills": ["athleticism"],                    "color": Color(0.90, 0.55, 0.15)},
+    {"file": "Medical",      "name": "Field Medical Handbook",    "skills": ["vitality", "regeneration"],       "color": Color(0.85, 0.20, 0.20)},
+    {"file": "Wilderness",   "name": "Wilderness Survival Primer","skills": ["hunger_resist", "thirst_resist"], "color": Color(0.40, 0.55, 0.25)},
+    {"file": "Marksmanship", "name": "Combat Marksmanship",       "skills": ["recoil_control", "composure"],    "color": Color(0.30, 0.35, 0.40)},
+    {"file": "Meditations",  "name": "Meditations",               "skills": ["iron_will"],                      "color": Color(0.55, 0.30, 0.70)},
+    {"file": "Unseen",       "name": "Art of Moving Unseen",      "skills": ["stealth"],                        "color": Color(0.20, 0.22, 0.30)},
+    {"file": "Scavenger",    "name": "Scavenger's Almanac",       "skills": ["scavenger"],                      "color": Color(0.55, 0.45, 0.25)},
+    {"file": "Arctic",       "name": "Arctic Field Guide",        "skills": ["cold_resistance", "endurance"],   "color": Color(0.35, 0.55, 0.75)},
+]
+
+# Built at runtime in _init_skillbook_items and keyed by ItemData.file.
+# Needed for fast lookup on Consume and for shelter respawn.
+var _skillbook_catalog: Dictionary = {}  # file -> {skills: Array, item_data: ItemData, pickup: PackedScene}
+
+# Shelter persistence — base LoadShelter won't know our items exist, so we
+# re-instantiate any skill-book pickups saved in the shelter .tres ourselves.
+var _sb_last_scene_name: String = ""
+
+var skill_xp_pool: Dictionary = {}
+
 # Config — Skill max levels
 var cfg_max_levels: Array = [10, 10, 10, 10, 10, 10, 5, 10, 10, 10, 5, 5, 5]
 
@@ -188,6 +223,478 @@ func _install_overrides():
     # All other overrides replaced with compat polling in _process().
     overrideScript("res://mods/XPSkillsSystem/Interface.gd")
     overrideScript("res://mods/XPSkillsSystem/Character.gd")
+    _install_skillbook_hooks()
+
+func _install_skillbook_hooks():
+    # Emergency bypass — drop this marker file if skill-book init ever
+    # misbehaves. Keeps the rest of the mod (XP, skills, prestige) working
+    # while the books are disabled.
+    if FileAccess.file_exists("user://XPSkillsDisableBooks.txt"):
+        print("[XP Skills] Bypass marker found — skipping skill-book init")
+        return
+    # Catches SKILLBOOK_DEFS drift at boot instead of silently failing
+    # inside award_skillbook_xp when a consumed book lists an unknown skill.
+    for def in SKILLBOOK_DEFS:
+        for sid in def.skills:
+            if skill_ids.find(sid) < 0:
+                push_warning("[XP Skills] SKILLBOOK_DEFS['" + str(def.file) + "'] references unknown skill id '" + sid + "'")
+    if _skillbook_catalog.is_empty():
+        _init_skillbook_items()
+    else:
+        # Already initialized — flipping the MCM toggle shouldn't recreate
+        # every resource and invalidate world/inventory references. Just
+        # update the consumable flag and let the loot injector re-run.
+        for book_file in _skillbook_catalog.keys():
+            var item: ItemData = _skillbook_catalog[book_file].item_data
+            item.usable = cfg_skillbooks_enabled
+            item.phrase = "Read" if cfg_skillbooks_enabled else ""
+    _apply_skillbook_loot_injection()
+
+func _skillbook_file(def: Dictionary) -> String:
+    return SKILLBOOK_PREFIX + str(def.file)
+
+const SKILLBOOK_CACHE_PATH: String = "user://XPSkillsBookCache.cfg"
+# Bump whenever the on-disk .tres/.tscn layout changes so existing caches
+# get invalidated and rebuilt. v2 = icon referenced via ext_resource
+# instead of inline PackedByteArray. v3 = item.generalist flag set so
+# books appear in the Generalist trader's supply.
+const SKILLBOOK_CACHE_VERSION: int = 3
+
+func _init_skillbook_items():
+    # Fast path: if the source PNGs haven't changed since the last rebuild
+    # and all generated .tres/.tscn are still on disk, just load them into
+    # memory. Skips ~18 PNG decodes + ~27 disk writes per boot.
+    var sig: String = _skillbook_source_signature()
+    var cache := ConfigFile.new()
+    cache.load(SKILLBOOK_CACHE_PATH)
+    var cached_sig: String = str(cache.get_value("cache", "signature", ""))
+    var all_present: bool = true
+    for def in SKILLBOOK_DEFS:
+        var bf: String = _skillbook_file(def)
+        if !FileAccess.file_exists("user://" + bf + ".tres") or !FileAccess.file_exists("user://" + bf + ".tscn"):
+            all_present = false
+            break
+    if cached_sig != "" and cached_sig == sig and all_present:
+        print("[XP Skills] Skill-book cache hit — loading pre-built resources")
+        for def in SKILLBOOK_DEFS:
+            if !_load_cached_skillbook(def):
+                # A cached file failed to load — fall back to rebuild and
+                # stop using the cache for this boot.
+                _build_skillbook_files(def)
+        return
+    print("[XP Skills] Skill-book cache miss — rebuilding 9 books from source")
+    for def in SKILLBOOK_DEFS:
+        _build_skillbook_files(def)
+    cache.set_value("cache", "signature", sig)
+    cache.save(SKILLBOOK_CACHE_PATH)
+
+func _load_cached_skillbook(def: Dictionary) -> bool:
+    # On cache hit we only load the small ItemData (icon + tetris, ~128KB).
+    # The pickup .tscn drags in the 1024² cover texture (~1MB decoded per
+    # book), so we defer it until something actually needs to spawn — loot
+    # spawns store SlotData, not pickups, so in most sessions nobody pays.
+    var book_file: String = _skillbook_file(def)
+    var item_path: String = "user://" + book_file + ".tres"
+    var pickup_path: String = "user://" + book_file + ".tscn"
+    var item = ResourceLoader.load(item_path)
+    if item == null or !FileAccess.file_exists(pickup_path):
+        return false
+    _skillbook_catalog[book_file] = {
+        "skills": def.skills.duplicate(),
+        "item_data": item,
+        "pickup": null,
+        "pickup_path": pickup_path,
+    }
+    return true
+
+func _get_skillbook_pickup(book_file: String) -> PackedScene:
+    # Lazy-load the pickup scene on first use. Subsequent lookups hit
+    # Godot's resource cache directly.
+    if !_skillbook_catalog.has(book_file):
+        return null
+    var entry = _skillbook_catalog[book_file]
+    if entry.get("pickup") != null:
+        return entry.pickup
+    var path: String = str(entry.get("pickup_path", ""))
+    if path == "" or !FileAccess.file_exists(path):
+        return null
+    var scene = ResourceLoader.load(path)
+    if scene != null:
+        entry.pickup = scene
+    return scene
+
+func _skillbook_source_signature() -> String:
+    # Collect <filename>:<size>:<mtime> for every PNG under Books/ so the
+    # signature changes if any source art is added, removed, or edited.
+    var parts: Array = ["v:" + str(SKILLBOOK_CACHE_VERSION)]
+    var dirs: Array = [
+        "res://mods/XPSkillsSystem/Books",
+        OS.get_executable_path().get_base_dir().path_join("mods").path_join("XPSkillsSystem").path_join("Books"),
+    ]
+    for dir_path in dirs:
+        var dir := DirAccess.open(dir_path)
+        if dir == null:
+            continue
+        dir.list_dir_begin()
+        var fname := dir.get_next()
+        while fname != "":
+            if !dir.current_is_dir() and fname.to_lower().ends_with(".png"):
+                var full: String = dir_path.path_join(fname)
+                var mtime: int = FileAccess.get_modified_time(full)
+                var size: int = -1
+                var af := FileAccess.open(full, FileAccess.READ)
+                if af:
+                    size = af.get_length()
+                    af.close()
+                parts.append("%s:%d:%d" % [fname, size, mtime])
+            fname = dir.get_next()
+        dir.list_dir_end()
+        break
+    parts.sort()
+    return "|".join(parts)
+
+func _build_skillbook_files(def: Dictionary):
+    # Idempotent: creates on-disk .tres/.tscn files for this book and
+    # links their in-memory cache entries. If the book is already in
+    # _skillbook_catalog, we rebuild disk files (in case FormatSave wiped
+    # them on a New Game) but keep the existing ItemData instance so
+    # LT_Master references stay valid across the reset.
+    var book_file: String = _skillbook_file(def)
+    var icon_res_path: String = "user://" + book_file + "_Icon.tres"
+    var tetris_path: String = "user://" + book_file + "_Tetris.tscn"
+    var item_path: String = "user://" + book_file + ".tres"
+    var pickup_path: String = "user://" + book_file + ".tscn"
+
+    # Prefer real art if present, otherwise fall back to the placeholder.
+    # Drop a PNG at mods/XPSkillsSystem/Books/<File>/icon.png to take over.
+    var icon: ImageTexture = _load_skillbook_icon_override(str(def.file))
+    if icon == null:
+        icon = _build_skillbook_icon(def.color)
+    ResourceSaver.save(icon, icon_res_path)
+    # Without this the ItemData serializer embeds the full icon bitmap
+    # inline (~500KB per book). take_over_path binds the in-memory instance
+    # to its saved file, so ItemData writes a cheap ext_resource reference.
+    icon.take_over_path(icon_res_path)
+
+    var tetris_src: String = _build_skillbook_tetris_tscn(book_file, icon_res_path)
+    var tf := FileAccess.open(tetris_path, FileAccess.WRITE)
+    if tf:
+        tf.store_string(tetris_src)
+        tf.close()
+    var tetris = ResourceLoader.load(tetris_path, "", ResourceLoader.CACHE_MODE_REPLACE)
+
+    var item: ItemData
+    if _skillbook_catalog.has(book_file):
+        item = _skillbook_catalog[book_file].item_data
+    else:
+        item = ItemData.new()
+    item.file = book_file
+    item.name = def.name
+    item.inventory = str(def.file)
+    item.rotated = str(def.file)
+    item.equipment = str(def.file)
+    item.display = str(def.file)
+    item.type = "Literature"
+    item.weight = 0.4
+    item.value = 75
+    item.icon = icon
+    item.tetris = tetris
+    item.size = Vector2(1, 2)
+    item.usable = cfg_skillbooks_enabled
+    item.phrase = "Read" if cfg_skillbooks_enabled else ""
+    item.rarity = item.Rarity.Rare
+    item.civilian = true
+    item.generalist = true
+    item.grandma = true
+    ResourceSaver.save(item, item_path)
+    ResourceLoader.load(item_path, "", ResourceLoader.CACHE_MODE_REPLACE)
+
+    # Optional real cover texture — if the modder ships cover.png, save it
+    # as a .tres so the pickup scene can pull it in as an ext_resource.
+    # No CACHE_MODE_REPLACE here: the pickup .tscn is lazy-loaded and will
+    # resolve this resource from disk on first use.
+    var cover_tex_path: String = ""
+    var cover_tex: ImageTexture = _load_skillbook_cover_override(str(def.file))
+    if cover_tex != null:
+        cover_tex_path = "user://" + book_file + "_Cover.tres"
+        ResourceSaver.save(cover_tex, cover_tex_path)
+
+    var pickup_src: String = _build_skillbook_pickup_tscn(book_file, def.color, cover_tex_path)
+    var pf := FileAccess.open(pickup_path, FileAccess.WRITE)
+    if pf:
+        pf.store_string(pickup_src)
+        pf.close()
+    # Pickup scene is NOT pre-loaded here — _get_skillbook_pickup reads it
+    # from disk on first use. Mid-session art swaps aren't supported; a
+    # restart gives a clean cache.
+    _skillbook_catalog[book_file] = {
+        "skills": def.skills.duplicate(),
+        "item_data": item,
+        "pickup": null,
+        "pickup_path": pickup_path,
+    }
+
+func _ensure_skillbook_files():
+    # Called after FormatSave on New Game. Rewrites the disk files and
+    # refreshes cache without touching the in-memory ItemData references
+    # that LT_Master.items already points to.
+    for def in SKILLBOOK_DEFS:
+        _build_skillbook_files(def)
+
+func _skillbook_mod_file(rel_path: String) -> String:
+    # Matches the Cash-mod helper: when packaged, files live at
+    # res://mods/XPSkillsSystem/...; in an uncompressed dev install they
+    # sit next to the executable under <game>/mods/XPSkillsSystem/...
+    var res_path := "res://mods/XPSkillsSystem/" + rel_path
+    if FileAccess.file_exists(res_path):
+        return res_path
+    var base := OS.get_executable_path().get_base_dir()
+    var disk_path := base.path_join("mods").path_join("XPSkillsSystem").path_join(rel_path)
+    if FileAccess.file_exists(disk_path):
+        return disk_path
+    return ""
+
+func _load_skillbook_icon_override(file_key: String) -> ImageTexture:
+    # The tetris Sprite2D renders at 0.5× scale, so the texture needs to be
+    # 128×256 to fit a 1×2 inventory slot cleanly. Any source resolution gets
+    # resampled down to that target.
+    var tex := _load_skillbook_png_at([
+        "Books/" + file_key + "/icon.png",
+        "Books/" + file_key + " icon.png",
+        "Books/" + file_key + "_icon.png",
+    ], file_key, "icon")
+    if tex == null:
+        return null
+    var img := tex.get_image()
+    if img == null:
+        return null
+    if img.get_width() != 128 or img.get_height() != 256:
+        img.resize(128, 256, Image.INTERPOLATE_LANCZOS)
+        return ImageTexture.create_from_image(img)
+    return tex
+
+func _load_skillbook_cover_override(file_key: String) -> ImageTexture:
+    return _load_skillbook_png_at([
+        "Books/" + file_key + "/cover.png",
+        "Books/" + file_key + ".png",
+    ], file_key, "cover")
+
+func _load_skillbook_png_at(rel_paths: Array, file_key: String = "", kind: String = "") -> ImageTexture:
+    for rel in rel_paths:
+        var path := _skillbook_mod_file(rel)
+        if path == "":
+            continue
+        var tex := _read_png_as_texture(path)
+        if tex != null:
+            return tex
+    # Case-insensitive flat-layout fallback — user-supplied art sometimes has
+    # inconsistent capitalisation (e.g. "arctic icon.png" vs catalog "Arctic").
+    if file_key != "" and kind != "":
+        var hit := _case_insensitive_find(file_key, kind)
+        if hit != "":
+            var tex2 := _read_png_as_texture(hit)
+            if tex2 != null:
+                return tex2
+    return null
+
+func _read_png_as_texture(path: String) -> ImageTexture:
+    var bytes := FileAccess.get_file_as_bytes(path)
+    if bytes.is_empty():
+        return null
+    var img := Image.new()
+    if img.load_png_from_buffer(bytes) != OK:
+        return null
+    return ImageTexture.create_from_image(img)
+
+func _case_insensitive_find(file_key: String, kind: String) -> String:
+    # Scan Books/ for "<key> <kind>.png" ignoring case. Tries both the
+    # packaged (res://) and disk-based mod dirs since FileAccess.file_exists
+    # can't detect directories, only files.
+    var needles: Array = [file_key.to_lower() + " " + kind + ".png"]
+    if kind == "cover":
+        needles.append(file_key.to_lower() + ".png")
+    var candidates: Array = [
+        "res://mods/XPSkillsSystem/Books",
+        OS.get_executable_path().get_base_dir().path_join("mods").path_join("XPSkillsSystem").path_join("Books"),
+    ]
+    for dir_path in candidates:
+        var dir := DirAccess.open(dir_path)
+        if dir == null:
+            continue
+        dir.list_dir_begin()
+        var fname := dir.get_next()
+        while fname != "":
+            if !dir.current_is_dir():
+                var low := fname.to_lower()
+                for n in needles:
+                    if low == n:
+                        dir.list_dir_end()
+                        return dir_path.path_join(fname)
+            fname = dir.get_next()
+        dir.list_dir_end()
+    return ""
+
+func _build_skillbook_icon(tint: Color) -> ImageTexture:
+    # 128x256 placeholder — matches vanilla Icon_Book_* dimensions so real
+    # art can drop in at the same resolution without resampling.
+    var img := Image.create(128, 256, false, Image.FORMAT_RGBA8)
+    img.fill(tint)
+    var edge := tint.lightened(0.15)
+    var shadow := tint.darkened(0.35)
+    for x in range(128):
+        for t in range(4):
+            img.set_pixel(x, t, edge)
+            img.set_pixel(x, 255 - t, shadow)
+    for y in range(256):
+        for t in range(4):
+            img.set_pixel(t, y, shadow)
+            img.set_pixel(127 - t, y, shadow)
+    # Vertical spine line
+    for y in range(16, 240):
+        for x in range(8, 12):
+            img.set_pixel(x, y, shadow)
+    # Horizontal "title band"
+    var band := tint.darkened(0.25)
+    for y in range(64, 96):
+        for x in range(20, 112):
+            img.set_pixel(x, y, band)
+    return ImageTexture.create_from_image(img)
+
+func _build_skillbook_tetris_tscn(book_file: String, icon_path: String) -> String:
+    var lines := PackedStringArray()
+    lines.append('[gd_scene format=3]')
+    lines.append('')
+    lines.append('[ext_resource type="Material" path="res://UI/Effects/MT_Item.tres" id="1"]')
+    lines.append('[ext_resource type="Texture2D" path="' + icon_path + '" id="2"]')
+    lines.append('')
+    lines.append('[node name="' + book_file + '" type="Sprite2D"]')
+    lines.append('material = ExtResource("1")')
+    lines.append('position = Vector2(32, 64)')
+    lines.append('scale = Vector2(0.5, 0.5)')
+    lines.append('texture = ExtResource("2")')
+    lines.append('')
+    return "\n".join(lines)
+
+func _build_skillbook_pickup_tscn(book_file: String, tint: Color, cover_tex_path: String = "") -> String:
+    # Reuses the vanilla book mesh (MS_Book.obj). If cover_tex_path is set,
+    # the material references that Texture2D via ExtResource("6"); otherwise
+    # we fall back to a flat albedo_color tint.
+    var lines := PackedStringArray()
+    lines.append('[gd_scene format=3]')
+    lines.append('')
+    lines.append('[ext_resource type="PhysicsMaterial" path="res://Items/Physics/Item_Physics.tres" id="1"]')
+    lines.append('[ext_resource type="Script" path="res://Scripts/Pickup.gd" id="2"]')
+    lines.append('[ext_resource type="Resource" path="user://' + book_file + '.tres" id="3"]')
+    lines.append('[ext_resource type="Script" path="res://Scripts/SlotData.gd" id="4"]')
+    lines.append('[ext_resource type="ArrayMesh" path="res://Items/Books/Files/MS_Book.obj" id="5"]')
+    if cover_tex_path != "":
+        lines.append('[ext_resource type="Texture2D" path="' + cover_tex_path + '" id="6"]')
+    lines.append('')
+    lines.append('[sub_resource type="Resource" id="SlotData_1"]')
+    lines.append('script = ExtResource("4")')
+    lines.append('resource_local_to_scene = true')
+    lines.append('itemData = ExtResource("3")')
+    lines.append('')
+    lines.append('[sub_resource type="StandardMaterial3D" id="Material_1"]')
+    if cover_tex_path != "":
+        lines.append('albedo_texture = ExtResource("6")')
+    else:
+        lines.append('albedo_color = Color(%s, %s, %s, 1)' % [tint.r, tint.g, tint.b])
+    lines.append('roughness = 0.85')
+    lines.append('')
+    lines.append('[sub_resource type="BoxShape3D" id="BoxShape_1"]')
+    lines.append('size = Vector3(0.14, 0.2, 0.02)')
+    lines.append('')
+    lines.append('[node name="' + book_file + '" type="RigidBody3D" node_paths=PackedStringArray("mesh", "collision") groups=["Item"]]')
+    lines.append('collision_layer = 4')
+    lines.append('collision_mask = 29')
+    lines.append('physics_material_override = ExtResource("1")')
+    lines.append('script = ExtResource("2")')
+    lines.append('slotData = SubResource("SlotData_1")')
+    lines.append('mesh = NodePath("Mesh")')
+    lines.append('collision = NodePath("Collision")')
+    lines.append('')
+    lines.append('[node name="Mesh" type="MeshInstance3D" parent="."]')
+    lines.append('layers = 4')
+    lines.append('visibility_range_end = 25.0')
+    lines.append('mesh = ExtResource("5")')
+    lines.append('surface_material_override/0 = SubResource("Material_1")')
+    lines.append('')
+    lines.append('[node name="Collision" type="CollisionShape3D" parent="."]')
+    lines.append('transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 0)')
+    lines.append('shape = SubResource("BoxShape_1")')
+    lines.append('')
+    return "\n".join(lines)
+
+func _apply_skillbook_loot_injection():
+    # Runs after _init_skillbook_items, so every SKILLBOOK_PREFIX ItemData
+    # is already created. Append-only; we never remove items we don't own.
+    var lt = load("res://Loot/LT_Master.tres")
+    if !lt:
+        push_warning("[XP Skills] Could not load LT_Master — skill books will not spawn as loot.")
+        return
+    var owned: Dictionary = {}
+    for book_file in _skillbook_catalog.keys():
+        owned[book_file] = _skillbook_catalog[book_file].item_data
+    # Remove any previous injections so toggling the MCM switch off leaves
+    # the loot table clean.
+    for i in range(lt.items.size() - 1, -1, -1):
+        var it = lt.items[i]
+        if it and "file" in it and str(it.file).begins_with(SKILLBOOK_PREFIX):
+            lt.items.remove_at(i)
+    if cfg_skillbooks_enabled:
+        for book_file in owned.keys():
+            lt.items.append(owned[book_file])
+        print("[XP Skills] Injected %d skill book(s) into LT_Master (now %d total items)" % [owned.size(), lt.items.size()])
+
+func _respawn_skillbooks_deferred(shelter_name: String):
+    # Base LoadShelter awaits 0.1s internally. Wait a touch longer so every
+    # vanilla item has been spawned before we add ours on top.
+    await get_tree().create_timer(0.3).timeout
+    _respawn_skillbooks_in_shelter(shelter_name)
+
+func _respawn_skillbooks_in_shelter(shelter_name: String):
+    # Base LoadShelter calls Database.get(item.file) and skips when it's
+    # null, which it will be for every SKILLBOOK_PREFIX item. Without this
+    # step, books dropped in the Cabin or Tent vanish on shelter reload.
+    var path: String = "user://" + shelter_name + ".tres"
+    if !FileAccess.file_exists(path):
+        return
+    var shelter = load(path)
+    if !shelter or not ("items" in shelter):
+        return
+    var map = get_tree().current_scene.get_node_or_null("/root/Map")
+    if !map:
+        return
+    var count: int = 0
+    for item in shelter.items:
+        if item == null or item.slotData == null or item.slotData.itemData == null:
+            continue
+        var file_name: String = str(item.slotData.itemData.file)
+        if !file_name.begins_with(SKILLBOOK_PREFIX):
+            continue
+        if !_skillbook_catalog.has(file_name):
+            continue
+        if !item.position.is_finite() or !item.rotation.is_finite():
+            continue
+        if item.position.y < -10.0:
+            continue
+        var pickup_scene: PackedScene = _get_skillbook_pickup(file_name)
+        if pickup_scene == null:
+            continue
+        var pickup = pickup_scene.instantiate()
+        map.add_child(pickup)
+        pickup.slotData.Update(item.slotData)
+        pickup.name = item.name
+        pickup.global_position = item.position
+        pickup.global_rotation = item.rotation
+        if pickup.has_method("Freeze"):
+            pickup.Freeze()
+        if pickup.has_method("UpdateAttachments"):
+            pickup.UpdateAttachments()
+        count += 1
+    if count > 0:
+        print("[XP Skills] Restored %d skill book(s) in %s" % [count, shelter_name])
 
 func _migrate_marker_file():
     if FileAccess.file_exists("user://XPSkillsMarker.tres"):
@@ -235,7 +742,17 @@ func _process(delta):
         # single string compare.
         if _get_xp_data_path() != _last_xp_path:
             LoadXP()
-        if !FileAccess.file_exists("user://XPSkillsMarker.tres"):
+        # Two independent new-game signals. Marker alone is unreliable —
+        # any SaveXP between FormatSave and this check recreates it. The
+        # initialSpawn flag on Character.tres covers that race because only
+        # Loader.SaveCharacter() clears it.
+        var is_new_game: bool = false
+        if !gameData.tutorial:
+            if !FileAccess.file_exists("user://XPSkillsMarker.tres"):
+                is_new_game = true
+            elif _character_initial_spawn():
+                is_new_game = true
+        if is_new_game:
             ResetXP()
             # New game wipes prestige too. ResetXP alone only wipes prestige
             # when the hardcore "reset on death" toggle is on, because it
@@ -245,6 +762,10 @@ func _process(delta):
             var pp = _get_prestige_path()
             if FileAccess.file_exists(pp):
                 DirAccess.remove_absolute(ProjectSettings.globalize_path(pp))
+            # FormatSave wiped our XPSkillbook_*.tres too — rewrite them so
+            # cached pickup scenes can still resolve their ext_resources.
+            if !_skillbook_catalog.is_empty():
+                _ensure_skillbook_files()
             print("[XP Skills] New game detected — XP and prestige reset")
         _ensure_marker()
         # Seed trader baselines from the authoritative save file. Must happen
@@ -262,6 +783,18 @@ func _process(delta):
     # even if another mod stomped our Character.gd override
     if !gameData.menu:
         _sync_to_gamedata()
+
+    # Detect scene change to respawn any skill books saved in shelters.
+    # Base LoadShelter skips them (Database.get returns null for our
+    # custom items) so we re-instantiate on the frame after load.
+    var cur_scene = get_tree().current_scene
+    if cur_scene and "mapName" in cur_scene:
+        var mn: String = str(cur_scene.mapName)
+        if mn != "" and mn != _sb_last_scene_name:
+            _sb_last_scene_name = mn
+            call_deferred("_respawn_skillbooks_deferred", mn)
+    elif cur_scene:
+        _sb_last_scene_name = ""
 
     # Track grenade throws for kill attribution
     var g1 = gameData.grenade1 if "grenade1" in gameData else false
@@ -678,6 +1211,7 @@ func _reset_session_state():
     _trade_btn = null
     _trade_connected = false
     _damage_node = null
+    _sb_last_scene_name = ""
 
 # --- Compat: Composure (reduces camera shake on hits) ---
 
@@ -1100,6 +1634,28 @@ func _register_mcm():
         "menu_pos" = 45
     })
 
+    # ─── Skill Books ───
+    _config.set_value("Bool", "cfg_skillbooks_enabled", {
+        "name" = "Enable Skill Books",
+        "tooltip" = "When ON, 9 dedicated skill books spawn as Rare civilian loot and can be read to grant XP into specific skills. Each book trains one skill (Fitness, Athletics, Meditation, Stealth, Scavenging) or two at 60% total split 50/50 (Medical: Vitality+Regen; Survival: Hunger+Thirst; Combat: Recoil+Composure; Arctic: Cold+Endurance). Toggling off removes them from new-loot rolls and disables the Read action; existing world/inventory books stay but become inert until re-enabled.",
+        "default" = true, "value" = true,
+        "menu_pos" = 46
+    })
+    _config.set_value("Int", "cfg_skillbook_base_xp", {
+        "name" = "Skill Book Base XP",
+        "tooltip" = "XP a solo-skill book (Fitness, Athletics, Meditation, Stealth, Scavenging) grants when read. Dual-skill books (Medical, Survival, Combat, Arctic) use the multiplier below and split the result evenly between their two skills.",
+        "default" = 200, "value" = 200,
+        "minRange" = 10, "maxRange" = 2000,
+        "menu_pos" = 47
+    })
+    _config.set_value("Int", "cfg_skillbook_dual_multiplier", {
+        "name" = "Dual-Skill Book Multiplier (%)",
+        "tooltip" = "Dual-skill books grant this percentage of a solo book's base XP, split 50/50 between their two skills. 60 (default) means a dual book grants 0.6 × base, giving each skill 0.3 × base.",
+        "default" = 60, "value" = 60,
+        "minRange" = 0, "maxRange" = 200,
+        "menu_pos" = 48
+    })
+
     if !FileAccess.file_exists(MCM_FILE_PATH + "/config.ini"):
         DirAccess.open("user://").make_dir_recursive(MCM_FILE_PATH)
         _config.save(MCM_FILE_PATH + "/config.ini")
@@ -1133,6 +1689,9 @@ func _register_mcm():
 
 func _on_mcm_save(config: ConfigFile):
     _apply_mcm_config(config)
+    # Re-run the ItemData patch so flipping "Enable Skill Books" in MCM
+    # takes effect immediately instead of requiring a restart.
+    _install_skillbook_hooks()
     var ui = Engine.get_meta("XPInterface", null)
     if ui:
         ui.RebuildSkills()
@@ -1183,6 +1742,10 @@ func _apply_mcm_config(config: ConfigFile):
     cfg_prestige_speed = _mcm_val(config, "Int", "cfg_prestige_speed", 1) / 100.0
     cfg_prestige_scavenger = _mcm_val(config, "Int", "cfg_prestige_scavenger", 2) / 100.0
     cfg_prestige_composure = _mcm_val(config, "Int", "cfg_prestige_composure", 2) / 100.0
+    # Skill Books
+    cfg_skillbooks_enabled = _mcm_val(config, "Bool", "cfg_skillbooks_enabled", cfg_skillbooks_enabled)
+    cfg_skillbook_base_xp = int(_mcm_val(config, "Int", "cfg_skillbook_base_xp", cfg_skillbook_base_xp))
+    cfg_skillbook_dual_multiplier = _mcm_val(config, "Int", "cfg_skillbook_dual_multiplier", 60) / 100.0
     # Rebuild caps array from the single non-Vitality cap slider. Vitality
     # stays uncapped (-1); every other slot uses the MCM value.
     var shared_cap = int(_mcm_val(config, "Int", "cfg_prestige_cap", 10))
@@ -1214,6 +1777,9 @@ func LoadConfig():
         cfg_speed_bonus = cfg.get_value("bonuses", "speed_bonus", 0.04)
         cfg_scavenger_chance = cfg.get_value("bonuses", "scavenger_chance", 0.05)
         cfg_shake_reduce = cfg.get_value("bonuses", "shake_reduce", 0.10)
+        cfg_skillbooks_enabled = cfg.get_value("skillbooks", "enabled", true)
+        cfg_skillbook_base_xp = int(cfg.get_value("skillbooks", "base_xp", 200))
+        cfg_skillbook_dual_multiplier = float(cfg.get_value("skillbooks", "dual_multiplier", 0.6))
         for sid in skill_ids:
             cfg_skill_enabled[sid] = cfg.get_value("toggles", sid, true)
         var ml = cfg.get_value("skills", "max_levels", "10,10,10,10,10,10,5,10,10,10,5,5,5")
@@ -1244,6 +1810,9 @@ func SaveConfig():
     cfg.set_value("bonuses", "speed_bonus", cfg_speed_bonus)
     cfg.set_value("bonuses", "scavenger_chance", cfg_scavenger_chance)
     cfg.set_value("bonuses", "shake_reduce", cfg_shake_reduce)
+    cfg.set_value("skillbooks", "enabled", cfg_skillbooks_enabled)
+    cfg.set_value("skillbooks", "base_xp", cfg_skillbook_base_xp)
+    cfg.set_value("skillbooks", "dual_multiplier", cfg_skillbook_dual_multiplier)
     for sid in skill_ids:
         cfg.set_value("toggles", sid, cfg_skill_enabled[sid])
     var ml = ",".join(cfg_max_levels.map(func(v): return str(v)))
@@ -1282,6 +1851,8 @@ func SaveXP():
     cfg.set_value("xp", "container_fraction", _container_xp_fraction)
     for trader_name in cfg_trader_task_counts.keys():
         cfg.set_value("trader_task_counts", trader_name, cfg_trader_task_counts[trader_name])
+    for sid in skill_xp_pool.keys():
+        cfg.set_value("skillbook_pool", sid, float(skill_xp_pool[sid]))
     cfg.save(path)
     _sync_to_gamedata()
     _ensure_marker()
@@ -1336,6 +1907,9 @@ func LoadXP():
         if cfg.has_section("trader_task_counts"):
             for trader_name in cfg.get_section_keys("trader_task_counts"):
                 cfg_trader_task_counts[trader_name] = cfg.get_value("trader_task_counts", trader_name, 0)
+        if cfg.has_section("skillbook_pool"):
+            for sid in cfg.get_section_keys("skillbook_pool"):
+                skill_xp_pool[sid] = float(cfg.get_value("skillbook_pool", sid, 0.0))
     _last_xp_path = path
     # Prestige lives in its own file so it survives ResetXP. Load it here
     # so the active profile's prestige ranks are in memory for Character.gd
@@ -1361,6 +1935,7 @@ func _zero_xp_state():
     xpComposure = 0
     _container_xp_fraction = 0.0
     cfg_trader_task_counts.clear()
+    skill_xp_pool.clear()
 
 func ResetXP():
     _zero_xp_state()
@@ -1380,3 +1955,89 @@ func _ensure_marker():
     if !FileAccess.file_exists("user://XPSkillsMarker.tres"):
         var marker = Resource.new()
         ResourceSaver.save(marker, "user://XPSkillsMarker.tres")
+
+func award_skillbook_xp(item_data):
+    if !cfg_skillbooks_enabled or item_data == null:
+        return
+    if !("file" in item_data):
+        return
+    var file_name: String = str(item_data.file)
+    if not _skillbook_catalog.has(file_name):
+        return
+    var listed: Array = _skillbook_catalog[file_name].skills
+    # Same XP budget regardless of how many slots end up disabled — a dual
+    # book always grants `base × dual_multiplier`, a solo book always grants
+    # `base`. Disabled slots redirect their share to the general XP pool
+    # instead of being dropped, so reading a book is never a total waste.
+    var total_xp: float = float(cfg_skillbook_base_xp)
+    if listed.size() > 1:
+        total_xp *= cfg_skillbook_dual_multiplier
+    var xp_per_slot: float = total_xp / float(listed.size())
+    var general_fallback: float = 0.0
+    for sid in listed:
+        var idx = skill_ids.find(sid)
+        if idx >= 0 and is_skill_enabled(idx):
+            skill_xp_pool[sid] = float(skill_xp_pool.get(sid, 0.0)) + xp_per_slot
+            _try_level_up_from_pool(sid)
+        else:
+            general_fallback += xp_per_slot
+    if general_fallback > 0.0:
+        var g: int = int(round(general_fallback))
+        xp += g
+    xpTotal += int(round(total_xp))
+    SaveXP()
+    var ui = Engine.get_meta("XPInterface", null)
+    if ui and ui.has_method("UpdateSkillsUI"):
+        ui.UpdateSkillsUI()
+
+func _try_level_up_from_pool(sid: String):
+    var idx = skill_ids.find(sid)
+    if idx < 0:
+        return
+    if !is_skill_enabled(idx):
+        return
+    var current_level: int = get_level(idx)
+    var max_level: int = int(cfg_max_levels[idx])
+    var pool: float = float(skill_xp_pool.get(sid, 0.0))
+    while current_level < max_level:
+        var cost: float = float(cfg_cost_bases[idx]) * float(current_level + 1)
+        if pool < cost:
+            break
+        pool -= cost
+        current_level += 1
+        _set_level_by_index(idx, current_level)
+    # Drop stranded XP once the skill is maxed — otherwise the pool grows
+    # forever and survives into the next run via SaveXP.
+    if current_level >= max_level:
+        pool = 0.0
+    skill_xp_pool[sid] = pool
+
+func _set_level_by_index(idx: int, value: int):
+    match idx:
+        0: xpHealth = value
+        1: xpStamina = value
+        2: xpCarry = value
+        3: xpHunger = value
+        4: xpThirst = value
+        5: xpMental = value
+        6: xpRegen = value
+        7: xpColdRes = value
+        8: xpStealth = value
+        9: xpRecoil = value
+        10: xpSpeed = value
+        11: xpScavenger = value
+        12: xpComposure = value
+        _: push_warning("[XP Skills] _set_level_by_index: unknown skill index " + str(idx))
+
+func _character_initial_spawn() -> bool:
+    # Loader.NewGame() sets initialSpawn = true; Loader.SaveCharacter()
+    # clears it on the first save, so CACHE_MODE_IGNORE is required —
+    # a cached copy would return stale true after the first save.
+    if !FileAccess.file_exists("user://Character.tres"):
+        return false
+    var res = ResourceLoader.load("user://Character.tres", "", ResourceLoader.CACHE_MODE_IGNORE)
+    if res == null:
+        return false
+    if not ("initialSpawn" in res):
+        return false
+    return res.initialSpawn == true

@@ -1,0 +1,94 @@
+# A full XP and skill progression system for Road to Vostok
+
+Earn XP as you play, level 13 passive skills, and eventually **Prestige** to unlock permanent stat bonuses that carry across runs.
+
+### Earn XP by playing
+
+- **Searching containers** - 1 XP per container *(fractional values like 0.3 are supported if you want a slower grind)*
+- **Killing enemies** - 25 XP per kill
+- **Killing bosses** - 100 XP per kill
+- **Trading with merchants** - 10 XP per trade
+- **Completing tasks** - 50 XP per task
+
+All values are configurable via MCM.
+
+### 13 Upgradeable Skills
+
+| Skill | Default bonus | Max level |
+|---|---|---|
+| **Vitality** | +5 Max HP per level | 10 |
+| **Endurance** | −10% Stamina drain per level | 10 |
+| **Pack Mule** | +2 kg Carry Weight per level | 10 |
+| **Hunger Resist** | −8% Hunger drain per level | 10 |
+| **Thirst Resist** | −8% Thirst drain per level | 10 |
+| **Iron Will** | −8% Mental drain per level | 10 |
+| **Regeneration** | +0.02 HP/sec passive regen per level | 5 |
+| **Cold Resistance** | −8% Temperature loss per level | 10 |
+| **Stealth** | −5% AI hearing detection per level *(note: currently cosmetic while the mod runs without an AI.gd override)* | 10 |
+| **Recoil Control** | −5% Weapon recoil per level | 10 |
+| **Athleticism** | +4% Movement speed per level | 5 |
+| **Scavenger** | +5% bonus loot chance per level, better finds at higher ranks | 5 |
+| **Composure** | −10% Camera shake from hits per level | 5 |
+
+Upgrade costs scale with current level (base cost × next level), so rushing any one skill gets expensive fast.
+
+Skills tab appears inside your inventory alongside Crafting, Notes, and Map. XP updates in real time. Individual skills can be enabled or disabled via MCM - disabled skills hide from the UI and don't apply their bonuses.
+
+### Prestige (new in v2.2)
+
+Once **every skill you have enabled is fully maxed**, a "Prestige" button appears at the bottom of the Skills panel. Clicking it lets you pick one stat - Vitality, Athleticism, Pack Mule, whatever - and in exchange for wiping all your XP and skill levels, that stat gets a **permanent bonus** that persists forever.
+
+- Prestige bonuses are added **on top of** the skill tree - they're a permanent floor that your re-leveled skills stack on
+- **Vitality is uncapped** - keep prestiging it as much as you want, you'll just get tankier
+- All other stats cap at 10 prestige ranks to keep late-game balance sane
+- Each skill tracks its own prestige count, shown as a ✦N badge on the skill row
+- Prestige ranks **survive death** by default (hardcore "Reset on Death" toggle available in MCM)
+- Starting a new game wipes prestige along with XP, as you'd expect
+- Every prestige bonus is individually tunable in MCM
+
+### Skill Books (new in v2.5)
+
+9 dedicated skill books that spawn as **Rare civilian loot**, show up in the **Generalist** trader's rotating supply, and train specific skills when read:
+
+| Book | Trains |
+|---|---|
+| **Fitness Manual** | Pack Mule |
+| **Athletic Training Guide** | Athleticism |
+| **Meditations** | Iron Will |
+| **Art of Moving Unseen** | Stealth |
+| **Scavenger's Almanac** | Scavenger |
+| **Field Medical Handbook** | Vitality + Regeneration |
+| **Wilderness Survival Primer** | Hunger Resist + Thirst Resist |
+| **Combat Marksmanship** | Recoil Control + Composure |
+| **Arctic Field Guide** | Cold Resistance + Endurance |
+
+- Right-click a book in inventory and hit **Read** — uses the same 4-second progress bar as any other consumable item.
+- Solo books grant a configurable base XP (default 200) to their one skill. Dual books grant `base × 60%` total, split 50/50 across their two skills.
+- The XP goes into a **per-skill pool** (separate from your spendable XP) and auto-levels the skill whenever the pool covers the next level's cost, using the same cost curve as a regular XP spend. Surplus at max level is discarded.
+- Placeholder covers and inventory icons are color-coded by skill category while real art is authored — the feature works identically either way.
+- MCM sliders: **Enable Skill Books**, **Skill Book Base XP**, **Dual-Skill Book Multiplier (%)**.
+
+### Compatibility
+
+- **Mod Configuration Menu** (optional but recommended) - exposes every XP reward, skill bonus, prestige bonus, and cap as a configurable slider
+- **Patty's Profiles** - each profile keeps its own separate XP, skill levels, and prestige progression. Switching profiles or dying on one profile doesn't affect the others
+- **HellMAI** - kill XP works correctly with HellMAI's custom AI via a pending-kill grace window
+- **Injuries System Rework** (and other `Character.gd` override mods) - our `Health()` override delegates via `super(delta)` so other mods' custom damage logic runs correctly when both are installed
+- **Aim Punch Modifier** (and other `Damage.gd` override mods) - **Composure** scales camera hit-shake in a post-process `_physics_process` rather than via a script override, so any reduction that mod applies is preserved and Composure stacks on top
+- **Cash System**, **Run Summary**, **Quick Stack & Sort** - all work alongside without conflict
+
+### Save behavior
+
+- XP and skill levels save automatically after every action
+- Prestige ranks save to a separate file so they survive death wipes
+- All state is per-profile when Patty's Profiles is installed
+- Death resets XP + skills by default (togglable in MCM); prestige is preserved unless you opt into the hardcore toggle
+
+### Report a bug
+
+[GitHub Issues](https://github.com/Dominicode-s/vostok-skills/issues)
+
+### Credits
+- The community bug reporters who DM'd me on the workshop and Discord - this mod is much more stable thanks to you
+- **DSGG1994** - Skill Books concept (v2.5): readable books that grant XP toward specific skills, with solo and dual-skill split
+- **Sr Rinite** - RPG-flavored direction (v2.5): per-skill XP pools + auto-leveling, and the "perks / legendary stats" framing that nudged the mod beyond flat XP rewards
