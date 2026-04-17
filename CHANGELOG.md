@@ -1,5 +1,11 @@
 # XP & Skills System — Changelog
 
+### v2.5.1
+- **Book textures shrunk by ~22 MB** (VMZ payload), no visual change:
+  - Icon PNGs pre-resampled to 128×256 on disk. The mod's runtime loader was already calling `Image.INTERPOLATE_LANCZOS` to resample every icon to that exact target, so shipping at source resolution (720×1456) was pure waste. The on-disk result is bit-equivalent to what the game was computing at load time.
+  - Cover PNGs downscaled from 1024×1024 → 512×512. Covers wrap a small in-hand book model and sample well below 1:1 at normal grip distance, so the visual result is indistinguishable.
+  - All PNGs recompressed with max DEFLATE + palette quantization where lossless.
+
 ### v2.5.0
 - **New: 9 dedicated skill books, covering all 13 skills.** Each book is a fresh item built at runtime (Cash-mod pattern) — vanilla Literature books are no longer repurposed. Books spawn as **Rare civilian loot** and can be read for XP into one or two skills:
   - **Fitness Manual** → Pack Mule *(solo)*
