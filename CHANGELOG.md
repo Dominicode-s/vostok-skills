@@ -1,5 +1,11 @@
 # XP & Skills System — Changelog
 
+### v2.5.2
+- **Fixed Interface.gd CHAIN BROKEN warning** when stacked with Cash System / Secure Container. Two override fixes:
+  - `_process(delta)` now calls `super(delta)` so mods layered on top of XP still get their `_process` invoked.
+  - `UpdateStats(updateLabels)` rewritten from a full-replacement into a delta-style override. Now calls `super(updateLabels)` first (letting the base game + any intermediate mod compute their version), then adds only the skill-based carry-weight bonus on top and re-evaluates overweight + capacity labels. Prior to this, fully replacing the base method silently dropped any other Interface.gd mod's `UpdateStats` logic.
+- No behavioural change for a solo XP install — same capacity math, same label output.
+
 ### v2.5.1
 - **Book textures shrunk by ~22 MB** (VMZ payload), no visual change:
   - Icon PNGs pre-resampled to 128×256 on disk. The mod's runtime loader was already calling `Image.INTERPOLATE_LANCZOS` to resample every icon to that exact target, so shipping at source resolution (720×1456) was pure waste. The on-disk result is bit-equivalent to what the game was computing at load time.
