@@ -21,6 +21,93 @@ var _prestige_status_label: Label = null
 var _prestige_modal: Control = null  # overlay panel for picker / confirm
 var _prestige_section: VBoxContainer = null  # wrapper so RebuildSkills can drop+rebuild
 
+func ContextPlace():
+    # Base ContextPlace calls Database.get(item.file) and fails for custom
+    # items. Same fix as Drop — use our catalogued pickup scene.
+    if contextItem and contextItem.slotData and contextItem.slotData.itemData:
+        var f: String = str(contextItem.slotData.itemData.file)
+        if f.begins_with("XPSkillbook_"):
+            var xp_mod = Engine.get_meta("XPMain", null)
+            if xp_mod:
+                _place_skillbook(xp_mod._get_skillbook_pickup(f))
+                return
+            PlayError()
+            return
+    super.ContextPlace()
+
+func _place_skillbook(scene: PackedScene):
+    if scene == null:
+        PlayError()
+        return
+    var map = get_tree().current_scene.get_node_or_null("/root/Map")
+    if map == null:
+        PlayError()
+        return
+    var pickup = scene.instantiate()
+    map.add_child(pickup)
+    pickup.slotData.Update(contextItem.slotData)
+    placer.ContextPlace(pickup)
+    if contextGrid:
+        contextGrid.Pick(contextItem)
+    contextItem.reparent(self)
+    contextItem.queue_free()
+    Reset()
+    HideContext()
+    PlayClick()
+    UIManager.ToggleInterface()
+
+func Drop(target):
+    # Base Drop uses Database.get(file) and queue_frees items whose file
+    # isn't registered there — that would silently delete any skill book
+    # the player drops. Handle our custom items before delegating.
+    if target and target.slotData and target.slotData.itemData:
+        var f: String = str(target.slotData.itemData.file)
+        if f.begins_with("XPSkillbook_"):
+            var xp_mod = Engine.get_meta("XPMain", null)
+            if xp_mod:
+                _drop_skillbook(target, xp_mod._get_skillbook_pickup(f))
+                return
+            PlayError()
+            return
+    super.Drop(target)
+
+func _drop_skillbook(target, scene: PackedScene):
+    var map = get_tree().current_scene.get_node_or_null("/root/Map")
+    if !map or scene == null:
+        PlayError()
+        return
+    var dir: Vector3
+    var pos: Vector3
+    var rot: Vector3
+    var force = 2.5
+    if trader and hoverGrid == null:
+        dir = trader.global_transform.basis.z
+        pos = (trader.global_position + Vector3(0, 1.0, 0)) + dir / 2
+        rot = Vector3(-25, trader.rotation_degrees.y + 180 + randf_range(-45, 45), 45)
+    elif hoverGrid != null and hoverGrid.get_parent().name == "Container":
+        dir = container.global_transform.basis.z
+        pos = (container.global_position + Vector3(0, 0.5, 0)) + dir / 2
+        rot = Vector3(-25, container.rotation_degrees.y + 180 + randf_range(-45, 45), 45)
+    else:
+        dir = -camera.global_transform.basis.z
+        pos = (camera.global_position + Vector3(0, -0.25, 0)) + dir / 2
+        rot = Vector3(-25, camera.rotation_degrees.y + 180 + randf_range(-45, 45), 45)
+    var pickup = scene.instantiate()
+    map.add_child(pickup)
+    pickup.position = pos
+    pickup.rotation_degrees = rot
+    pickup.linear_velocity = dir * force
+    if pickup.has_method("Unfreeze"):
+        pickup.Unfreeze()
+    var slot = SlotData.new()
+    slot.itemData = target.slotData.itemData
+    slot.amount = target.slotData.amount
+    pickup.slotData = slot
+    target.reparent(self)
+    target.queue_free()
+    PlayDrop()
+    UpdateStats(true)
+
 func _process(delta):
     if skillsUI and skillsUI.visible:
         _xp_refresh_timer += delta
@@ -176,6 +263,7 @@ func BuildSkillsUI():
     var scroll = ScrollContainer.new()
     scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
     margin.add_child(scroll)
 
     _skills_vbox = VBoxContainer.new()
@@ -264,6 +352,8 @@ func _build_skill_rows():
         descLabel.add_theme_font_size_override("font_size", 12)
         descLabel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         descLabel.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
+        descLabel.clip_text = true
+        descLabel.tooltip_text = skillDescs[i]
         row.add_child(descLabel)
         skillDescLabels.append(descLabel)
 
