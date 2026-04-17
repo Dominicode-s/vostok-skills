@@ -1,5 +1,12 @@
 # XP & Skills System — Changelog
 
+### v2.5.3
+- **Character.gd overrides now chain `super()`** for `Energy`, `Hydration`, `Mental`, `Stamina`, `Temperature`, and `Clamp`. Previously all six were full replacements, which silently dropped any other Character.gd-overriding mod's logic (e.g., an injuries rework mod layered on top).
+- **Math preserved exactly at default MCM values.** The rewrites use two techniques:
+  - **Scaled-delta** (Energy / Hydration / Mental / Temperature): zero out `gameData.xp<Stat>` so base's built-in `(1 - xp<Stat> × 0.08)` multiplier becomes 1.0, then pass `delta × (1 − skill_bonus)` to super. Net drain = `delta × skill_bonus / N`, identical to the old full-replacement formula.
+  - **Injection** (Stamina / Clamp): inject the equivalent `xp<Stat>` level into `gameData` across the super call so base's own multiplier produces our desired bonus. Slight precision loss possible if you use custom MCM multipliers; defaults are exact.
+- `_ready()` deliberately still skips `super()` — base `Character._ready()` re-initializes survival stats and would wipe our setup (documented gotcha in the modding guide).
+
 ### v2.5.2
 - **Fixed Interface.gd CHAIN BROKEN warning** when stacked with Cash System / Secure Container. Two override fixes:
   - `_process(delta)` now calls `super(delta)` so mods layered on top of XP still get their `_process` invoked.
