@@ -1,6 +1,6 @@
 # XP & Skills System — Changelog
 
-### v2.5.0 (unreleased)
+### v2.5.0
 - **New: 9 dedicated skill books, covering all 13 skills.** Each book is a fresh item built at runtime (Cash-mod pattern) — vanilla Literature books are no longer repurposed. Books spawn as **Rare civilian loot** and can be read for XP into one or two skills:
   - **Fitness Manual** → Pack Mule *(solo)*
   - **Athletic Training Guide** → Athleticism *(solo)*
@@ -29,7 +29,7 @@
 - Compatibility: we only append to `res://Loot/LT_Master.tres` (removing only our own entries on toggle-off), and our pickup scenes reuse vanilla assets, so other mods editing the loot table or book items are unaffected. Consume remains intercepted through the `Character.gd` override chain via `super(item)`.
 - **Thanks:** to **DSGG1994** for the skill-books concept (readable books that grant XP toward specific skills, with the solo-vs-dual XP split), and to **Sr Rinite** for the RPG-flavored direction — skill-pool accumulators, auto-leveling, and the broader "perks / legendary stats" framing that motivated moving beyond flat XP rewards.
 
-### v2.4.0 (unreleased, superseded by v2.5.0)
+### v2.4.0 (superseded by v2.5.0)
 - Skill Books v1 — repurposed the four vanilla Literature books as readable trainers. Replaced by v2.5's dedicated items so vanilla books stay vanilla. Concept: **DSGG1994**. RPG-style per-skill XP pool + auto-level mechanic: **Sr Rinite**.
 - **Fixed: new-game XP reset not firing on some fresh starts (community report).** Previously the new-game detector relied solely on `user://XPSkillsMarker.tres` being deleted by the base game's `FormatSave()`. Any `SaveXP()` call between `FormatSave` and our menu→game transition check recreated the marker and masked the new-game signal, leaving skill levels from the previous run intact. We now also check `Character.tres.initialSpawn` — set `true` by `Loader.NewGame()` and only cleared by `Loader.SaveCharacter()`, so it reliably flags the fresh-start window regardless of marker races. Either signal now triggers the XP + prestige wipe.
 
