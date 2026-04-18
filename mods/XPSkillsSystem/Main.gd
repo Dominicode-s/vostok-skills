@@ -301,30 +301,34 @@ func _init_skillbook_items():
     cache.save(SKILLBOOK_CACHE_PATH)
 
 func _load_cached_skillbook(def: Dictionary) -> bool:
-    # On cache hit we only load the small ItemData (icon + tetris, ~128KB).
-    # The pickup .tscn drags in the 1024² cover texture (~1MB decoded per
-    # book), so we defer it until something actually needs to spawn — loot
-    # spawns store SlotData, not pickups, so in most sessions nobody pays.
+    # Preload both ItemData AND the pickup scene (with its cover texture)
+    # at boot. Lazy-loading was experimented with and reverted — community
+    # crash reports pointed at on-demand resolution during container-open
+    # flows. Costs ~1MB per book of decoded cover texture but keeps the
+    # resource cache fully warm before any gameplay interaction.
     var book_file: String = _skillbook_file(def)
     var item_path: String = "user://" + book_file + ".tres"
     var pickup_path: String = "user://" + book_file + ".tscn"
     var item = ResourceLoader.load(item_path)
-    if item == null or !FileAccess.file_exists(pickup_path):
+    if item == null:
+        return false
+    var scene = ResourceLoader.load(pickup_path)
+    if scene == null:
         return false
     _skillbook_catalog[book_file] = {
         "skills": def.skills.duplicate(),
         "item_data": item,
-        "pickup": null,
+        "pickup": scene,
         "pickup_path": pickup_path,
     }
     return true
 
 func _get_skillbook_pickup(book_file: String) -> PackedScene:
-    # Lazy-load the pickup scene on first use. Subsequent lookups hit
-    # Godot's resource cache directly.
     if !_skillbook_catalog.has(book_file):
         return null
     var entry = _skillbook_catalog[book_file]
+    # Preloaded at boot — this is just a catalog lookup now. Fall back to
+    # a disk read only if the entry was somehow cleared mid-session.
     if entry.get("pickup") != null:
         return entry.pickup
     var path: String = str(entry.get("pickup_path", ""))
@@ -436,13 +440,15 @@ func _build_skillbook_files(def: Dictionary):
     if pf:
         pf.store_string(pickup_src)
         pf.close()
-    # Pickup scene is NOT pre-loaded here — _get_skillbook_pickup reads it
-    # from disk on first use. Mid-session art swaps aren't supported; a
-    # restart gives a clean cache.
+    # Eagerly load the pickup scene so its cover texture lives in the
+    # resource cache before any gameplay code touches it. Reverted the
+    # lazy-load experiment — community crash reports pointed at on-demand
+    # resolution during container-open flows.
+    var pickup_scene: PackedScene = ResourceLoader.load(pickup_path, "", ResourceLoader.CACHE_MODE_REPLACE)
     _skillbook_catalog[book_file] = {
         "skills": def.skills.duplicate(),
         "item_data": item,
-        "pickup": null,
+        "pickup": pickup_scene,
         "pickup_path": pickup_path,
     }
 
