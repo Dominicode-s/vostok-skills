@@ -1,5 +1,29 @@
 # XP & Skills System — Changelog
 
+### v2.5.4
+- **Fixed: community-reported crash when opening containers with skill-book loot rolls.** Two suspected contributors addressed together:
+  - The generated pickup `.tscn` referenced `res://Items/Books/Files/MS_Book.obj` as a path-only `ext_resource` — no UID. Godot's resource loader resolves UID first and falls back to path, and the fallback has proven fragile under certain mod-load orders (instantiation can fail after a few seconds of gameplay). We now parse `MS_Book.obj` ourselves at boot, save the triangulated `ArrayMesh` to `user://XPSkillbook_Mesh.res` (compressed), and reference that stable user-path from every pickup scene. Same visual result, no UID dependency.
+  - Reverted the v2.5.1 lazy-loading of pickup scenes. The pickup `.tscn` (which pulls in the 1024² cover texture) is now eagerly loaded at boot again, so the resource cache is fully warm before any container flow can reference it. Mild extra boot cost for significantly lower risk of on-demand resolution races during gameplay.
+- **Hardened dropped/placed/respawned pickups.** Explicit `add_to_group("Item")` guard after instantiating a pickup so the raycast-based interactor can always detect it, even if any future .tscn parsing oddity drops the group tag. Should fix the "can't pick up a book I just dropped / bought" reports.
+- **Removed the random door-knocking SFX** from the Scavenger skill proc (~0.2% chance cue that was meant as an easter egg — community didn't love it). Only the regular Scavenger search sound plays now.
+- **MCM: Scavenger SFX controls.** Two new entries:
+  - **Scavenger SFX Enabled** — turn the bonus-loot sound cue off entirely (silent scavenging).
+  - **Scavenger SFX Volume (%)** — 0–100 linear, mapped via `linear_to_db` so 100 is unchanged and 0 is silent.
+- Internal: skill-book cache version bumped to v4 so the pickup `.tscn` gets regenerated with the new mesh path on next launch (one-time regen, subsequent boots use the cache). `door.mp3` file removed from the mod bundle.
+
+### v2.5.3
+- **Character.gd overrides now chain `super()`** for `Energy`, `Hydration`, `Mental`, `Stamina`, `Temperature`, and `Clamp`. Previously all six were full replacements, which silently dropped any other Character.gd-overriding mod's logic (e.g., an injuries rework mod layered on top).
+- **Math preserved exactly at default MCM values.** The rewrites use two techniques:
+  - **Scaled-delta** (Energy / Hydration / Mental / Temperature): zero out `gameData.xp<Stat>` so base's built-in `(1 - xp<Stat> × 0.08)` multiplier becomes 1.0, then pass `delta × (1 − skill_bonus)` to super. Net drain = `delta × skill_bonus / N`, identical to the old full-replacement formula.
+  - **Injection** (Stamina / Clamp): inject the equivalent `xp<Stat>` level into `gameData` across the super call so base's own multiplier produces our desired bonus. Slight precision loss possible if you use custom MCM multipliers; defaults are exact.
+- `_ready()` deliberately still skips `super()` — base `Character._ready()` re-initializes survival stats and would wipe our setup (documented gotcha in the modding guide).
+
+### v2.5.2
+- **Fixed Interface.gd CHAIN BROKEN warning** when stacked with Cash System / Secure Container. Two override fixes:
+  - `_process(delta)` now calls `super(delta)` so mods layered on top of XP still get their `_process` invoked.
+  - `UpdateStats(updateLabels)` rewritten from a full-replacement into a delta-style override. Now calls `super(updateLabels)` first (letting the base game + any intermediate mod compute their version), then adds only the skill-based carry-weight bonus on top and re-evaluates overweight + capacity labels. Prior to this, fully replacing the base method silently dropped any other Interface.gd mod's `UpdateStats` logic.
+- No behavioural change for a solo XP install — same capacity math, same label output.
+
 ### v2.5.1
 - **Book textures shrunk by ~22 MB** (VMZ payload), no visual change:
   - Icon PNGs pre-resampled to 128×256 on disk. The mod's runtime loader was already calling `Image.INTERPOLATE_LANCZOS` to resample every icon to that exact target, so shipping at source resolution (720×1456) was pure waste. The on-disk result is bit-equivalent to what the game was computing at load time.

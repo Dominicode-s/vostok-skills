@@ -48,7 +48,9 @@ var _controller_base_sprint: float = 5.0
 
 # Scavenger SFX
 var _sfx_search: AudioStreamMP3
-var _sfx_door: AudioStreamMP3
+# Scavenger SFX config (MCM)
+var cfg_scavenger_sfx_enabled: bool = true
+var cfg_scavenger_sfx_volume: int = 80  # 0-100 (%) mapped to dB
 
 # Composure — cache the hit-shake Node3D (runs res://Scripts/Damage.gd) so we
 # can dampen its rotation in _physics_process without overriding the script.
@@ -135,6 +137,13 @@ var _skillbook_catalog: Dictionary = {}  # file -> {skills: Array, item_data: It
 # Shelter persistence — base LoadShelter won't know our items exist, so we
 # re-instantiate any skill-book pickups saved in the shelter .tres ourselves.
 var _sb_last_scene_name: String = ""
+
+# Path to the runtime-parsed book mesh. Referencing res://...MS_Book.obj as
+# a path-only ext_resource has proven fragile for community users — Godot
+# resolves via UID first and path fallback second, and the fallback can
+# fail in some mod-load configurations. We parse the vanilla .obj ourselves
+# into a stable user:// ArrayMesh to eliminate that failure mode.
+const SKILLBOOK_MESH_PATH: String = "user://XPSkillbook_Mesh.res"
 
 var skill_xp_pool: Dictionary = {}
 
@@ -232,6 +241,7 @@ func _install_skillbook_hooks():
     if FileAccess.file_exists("user://XPSkillsDisableBooks.txt"):
         print("[XP Skills] Bypass marker found — skipping skill-book init")
         return
+    _ensure_skillbook_mesh()
     # Catches SKILLBOOK_DEFS drift at boot instead of silently failing
     # inside award_skillbook_xp when a consumed book lists an unknown skill.
     for def in SKILLBOOK_DEFS:
@@ -257,8 +267,10 @@ const SKILLBOOK_CACHE_PATH: String = "user://XPSkillsBookCache.cfg"
 # Bump whenever the on-disk .tres/.tscn layout changes so existing caches
 # get invalidated and rebuilt. v2 = icon referenced via ext_resource
 # instead of inline PackedByteArray. v3 = item.generalist flag set so
-# books appear in the Generalist trader's supply.
-const SKILLBOOK_CACHE_VERSION: int = 3
+# books appear in the Generalist trader's supply. v4 = pickup references
+# the runtime-parsed user://XPSkillbook_Mesh.res instead of the vanilla
+# res://Items/Books/Files/MS_Book.obj (UID-resolution flakiness fix).
+const SKILLBOOK_CACHE_VERSION: int = 5
 
 func _init_skillbook_items():
     # Fast path: if the source PNGs haven't changed since the last rebuild
@@ -289,30 +301,34 @@ func _init_skillbook_items():
     cache.save(SKILLBOOK_CACHE_PATH)
 
 func _load_cached_skillbook(def: Dictionary) -> bool:
-    # On cache hit we only load the small ItemData (icon + tetris, ~128KB).
-    # The pickup .tscn drags in the 1024² cover texture (~1MB decoded per
-    # book), so we defer it until something actually needs to spawn — loot
-    # spawns store SlotData, not pickups, so in most sessions nobody pays.
+    # Preload both ItemData AND the pickup scene (with its cover texture)
+    # at boot. Lazy-loading was experimented with and reverted — community
+    # crash reports pointed at on-demand resolution during container-open
+    # flows. Costs ~1MB per book of decoded cover texture but keeps the
+    # resource cache fully warm before any gameplay interaction.
     var book_file: String = _skillbook_file(def)
     var item_path: String = "user://" + book_file + ".tres"
     var pickup_path: String = "user://" + book_file + ".tscn"
     var item = ResourceLoader.load(item_path)
-    if item == null or !FileAccess.file_exists(pickup_path):
+    if item == null:
+        return false
+    var scene = ResourceLoader.load(pickup_path)
+    if scene == null:
         return false
     _skillbook_catalog[book_file] = {
         "skills": def.skills.duplicate(),
         "item_data": item,
-        "pickup": null,
+        "pickup": scene,
         "pickup_path": pickup_path,
     }
     return true
 
 func _get_skillbook_pickup(book_file: String) -> PackedScene:
-    # Lazy-load the pickup scene on first use. Subsequent lookups hit
-    # Godot's resource cache directly.
     if !_skillbook_catalog.has(book_file):
         return null
     var entry = _skillbook_catalog[book_file]
+    # Preloaded at boot — this is just a catalog lookup now. Fall back to
+    # a disk read only if the entry was somehow cleared mid-session.
     if entry.get("pickup") != null:
         return entry.pickup
     var path: String = str(entry.get("pickup_path", ""))
@@ -424,13 +440,15 @@ func _build_skillbook_files(def: Dictionary):
     if pf:
         pf.store_string(pickup_src)
         pf.close()
-    # Pickup scene is NOT pre-loaded here — _get_skillbook_pickup reads it
-    # from disk on first use. Mid-session art swaps aren't supported; a
-    # restart gives a clean cache.
+    # Eagerly load the pickup scene so its cover texture lives in the
+    # resource cache before any gameplay code touches it. Reverted the
+    # lazy-load experiment — community crash reports pointed at on-demand
+    # resolution during container-open flows.
+    var pickup_scene: PackedScene = ResourceLoader.load(pickup_path, "", ResourceLoader.CACHE_MODE_REPLACE)
     _skillbook_catalog[book_file] = {
         "skills": def.skills.duplicate(),
         "item_data": item,
-        "pickup": null,
+        "pickup": pickup_scene,
         "pickup_path": pickup_path,
     }
 
@@ -575,10 +593,31 @@ func _build_skillbook_tetris_tscn(book_file: String, icon_path: String) -> Strin
     lines.append('')
     return "\n".join(lines)
 
+func _ensure_skillbook_mesh():
+    # Load the vanilla book mesh via the Godot resource loader (which
+    # reads the IMPORTED ArrayMesh — the raw .obj source is stripped
+    # from the PCK in packaged builds, so FileAccess can't read it as
+    # text) and save it to a stable user:// path that pickup .tscn
+    # files can reference without UID resolution.
+    if FileAccess.file_exists(SKILLBOOK_MESH_PATH):
+        return
+    var obj_path: String = "res://Items/Books/Files/MS_Book.obj"
+    if !ResourceLoader.exists(obj_path):
+        push_warning("[XP Skills] Vanilla book mesh not found at " + obj_path + " — skill books will fall back to BoxMesh")
+        return
+    var mesh = ResourceLoader.load(obj_path)
+    if mesh == null:
+        push_warning("[XP Skills] Failed to load " + obj_path + " — skill books will fall back to BoxMesh")
+        return
+    ResourceSaver.save(mesh, SKILLBOOK_MESH_PATH, ResourceSaver.FLAG_COMPRESS)
+
 func _build_skillbook_pickup_tscn(book_file: String, tint: Color, cover_tex_path: String = "") -> String:
-    # Reuses the vanilla book mesh (MS_Book.obj). If cover_tex_path is set,
-    # the material references that Texture2D via ExtResource("6"); otherwise
-    # we fall back to a flat albedo_color tint.
+    # Reuses the vanilla book mesh saved at SKILLBOOK_MESH_PATH. If that
+    # mesh file isn't present (ResourceLoader couldn't load the vanilla
+    # .obj for some reason) we fall back to a simple BoxMesh sub-resource
+    # so the scene still loads cleanly — an ext_resource to a missing
+    # file would fail the entire .tscn parse.
+    var has_mesh: bool = FileAccess.file_exists(SKILLBOOK_MESH_PATH)
     var lines := PackedStringArray()
     lines.append('[gd_scene format=3]')
     lines.append('')
@@ -586,7 +625,8 @@ func _build_skillbook_pickup_tscn(book_file: String, tint: Color, cover_tex_path
     lines.append('[ext_resource type="Script" path="res://Scripts/Pickup.gd" id="2"]')
     lines.append('[ext_resource type="Resource" path="user://' + book_file + '.tres" id="3"]')
     lines.append('[ext_resource type="Script" path="res://Scripts/SlotData.gd" id="4"]')
-    lines.append('[ext_resource type="ArrayMesh" path="res://Items/Books/Files/MS_Book.obj" id="5"]')
+    if has_mesh:
+        lines.append('[ext_resource type="ArrayMesh" path="' + SKILLBOOK_MESH_PATH + '" id="5"]')
     if cover_tex_path != "":
         lines.append('[ext_resource type="Texture2D" path="' + cover_tex_path + '" id="6"]')
     lines.append('')
@@ -602,6 +642,10 @@ func _build_skillbook_pickup_tscn(book_file: String, tint: Color, cover_tex_path
         lines.append('albedo_color = Color(%s, %s, %s, 1)' % [tint.r, tint.g, tint.b])
     lines.append('roughness = 0.85')
     lines.append('')
+    if !has_mesh:
+        lines.append('[sub_resource type="BoxMesh" id="BoxMesh_1"]')
+        lines.append('size = Vector3(0.14, 0.2, 0.02)')
+        lines.append('')
     lines.append('[sub_resource type="BoxShape3D" id="BoxShape_1"]')
     lines.append('size = Vector3(0.14, 0.2, 0.02)')
     lines.append('')
@@ -617,7 +661,10 @@ func _build_skillbook_pickup_tscn(book_file: String, tint: Color, cover_tex_path
     lines.append('[node name="Mesh" type="MeshInstance3D" parent="."]')
     lines.append('layers = 4')
     lines.append('visibility_range_end = 25.0')
-    lines.append('mesh = ExtResource("5")')
+    if has_mesh:
+        lines.append('mesh = ExtResource("5")')
+    else:
+        lines.append('mesh = SubResource("BoxMesh_1")')
     lines.append('surface_material_override/0 = SubResource("Material_1")')
     lines.append('')
     lines.append('[node name="Collision" type="CollisionShape3D" parent="."]')
@@ -684,6 +731,8 @@ func _respawn_skillbooks_in_shelter(shelter_name: String):
             continue
         var pickup = pickup_scene.instantiate()
         map.add_child(pickup)
+        if !pickup.is_in_group("Item"):
+            pickup.add_to_group("Item")
         pickup.slotData.Update(item.slotData)
         pickup.name = item.name
         pickup.global_position = item.position
@@ -1053,24 +1102,20 @@ func _load_scavenge_sfx():
         _sfx_search = AudioStreamMP3.new()
         _sfx_search.data = f.get_buffer(f.get_length())
         f.close()
-    f = FileAccess.open(base + "/door.mp3", FileAccess.READ)
-    if f:
-        _sfx_door = AudioStreamMP3.new()
-        _sfx_door.data = f.get_buffer(f.get_length())
-        f.close()
 
 func _show_scavenge_notify(ui_manager, item_name: String):
-    _load_scavenge_sfx()
-    var sfx = _sfx_search
-    if _sfx_door and randf() < 0.002:
-        sfx = _sfx_door
-    if sfx:
-        var player = AudioStreamPlayer.new()
-        player.stream = sfx
-        player.volume_db = 0.0
-        get_tree().root.add_child(player)
-        player.play()
-        player.finished.connect(player.queue_free)
+    if cfg_scavenger_sfx_enabled:
+        _load_scavenge_sfx()
+        if _sfx_search:
+            var player = AudioStreamPlayer.new()
+            player.stream = _sfx_search
+            # Linear 0-100 → dB. 100 = 0 dB (unchanged), 0 = silent (-60 dB
+            # floor). linear_to_db maps 1.0 → 0 dB, 0.01 → ~-40 dB.
+            var linear: float = clamp(cfg_scavenger_sfx_volume / 100.0, 0.0, 1.0)
+            player.volume_db = linear_to_db(linear) if linear > 0.001 else -60.0
+            get_tree().root.add_child(player)
+            player.play()
+            player.finished.connect(player.queue_free)
     var label = Label.new()
     label.text = "⭐ Scavenger: +1 " + item_name
     label.add_theme_font_size_override("font_size", 16)
@@ -1656,6 +1701,21 @@ func _register_mcm():
         "menu_pos" = 48
     })
 
+    # ─── Scavenger SFX ───
+    _config.set_value("Bool", "cfg_scavenger_sfx_enabled", {
+        "name" = "Scavenger SFX Enabled",
+        "tooltip" = "Play a sound cue when the Scavenger skill procs bonus loot from a container. Turn off for silent scavenging.",
+        "default" = true, "value" = true,
+        "menu_pos" = 49
+    })
+    _config.set_value("Int", "cfg_scavenger_sfx_volume", {
+        "name" = "Scavenger SFX Volume (%)",
+        "tooltip" = "Playback volume of the Scavenger bonus-loot sound cue. 100 = unchanged, 0 = silent (same as disabling).",
+        "default" = 80, "value" = 80,
+        "minRange" = 0, "maxRange" = 100,
+        "menu_pos" = 50
+    })
+
     if !FileAccess.file_exists(MCM_FILE_PATH + "/config.ini"):
         DirAccess.open("user://").make_dir_recursive(MCM_FILE_PATH)
         _config.save(MCM_FILE_PATH + "/config.ini")
@@ -1746,6 +1806,9 @@ func _apply_mcm_config(config: ConfigFile):
     cfg_skillbooks_enabled = _mcm_val(config, "Bool", "cfg_skillbooks_enabled", cfg_skillbooks_enabled)
     cfg_skillbook_base_xp = int(_mcm_val(config, "Int", "cfg_skillbook_base_xp", cfg_skillbook_base_xp))
     cfg_skillbook_dual_multiplier = _mcm_val(config, "Int", "cfg_skillbook_dual_multiplier", 60) / 100.0
+    # Scavenger SFX
+    cfg_scavenger_sfx_enabled = _mcm_val(config, "Bool", "cfg_scavenger_sfx_enabled", cfg_scavenger_sfx_enabled)
+    cfg_scavenger_sfx_volume = int(_mcm_val(config, "Int", "cfg_scavenger_sfx_volume", cfg_scavenger_sfx_volume))
     # Rebuild caps array from the single non-Vitality cap slider. Vitality
     # stays uncapped (-1); every other slot uses the MCM value.
     var shared_cap = int(_mcm_val(config, "Int", "cfg_prestige_cap", 10))
@@ -1780,6 +1843,8 @@ func LoadConfig():
         cfg_skillbooks_enabled = cfg.get_value("skillbooks", "enabled", true)
         cfg_skillbook_base_xp = int(cfg.get_value("skillbooks", "base_xp", 200))
         cfg_skillbook_dual_multiplier = float(cfg.get_value("skillbooks", "dual_multiplier", 0.6))
+        cfg_scavenger_sfx_enabled = cfg.get_value("scavenger", "sfx_enabled", true)
+        cfg_scavenger_sfx_volume = int(cfg.get_value("scavenger", "sfx_volume", 80))
         for sid in skill_ids:
             cfg_skill_enabled[sid] = cfg.get_value("toggles", sid, true)
         var ml = cfg.get_value("skills", "max_levels", "10,10,10,10,10,10,5,10,10,10,5,5,5")
@@ -1813,6 +1878,8 @@ func SaveConfig():
     cfg.set_value("skillbooks", "enabled", cfg_skillbooks_enabled)
     cfg.set_value("skillbooks", "base_xp", cfg_skillbook_base_xp)
     cfg.set_value("skillbooks", "dual_multiplier", cfg_skillbook_dual_multiplier)
+    cfg.set_value("scavenger", "sfx_enabled", cfg_scavenger_sfx_enabled)
+    cfg.set_value("scavenger", "sfx_volume", cfg_scavenger_sfx_volume)
     for sid in skill_ids:
         cfg.set_value("toggles", sid, cfg_skill_enabled[sid])
     var ml = ",".join(cfg_max_levels.map(func(v): return str(v)))
