@@ -28,73 +28,86 @@ func Health(delta):
             if gameData.health < maxHP:
                 gameData.health += delta * regen_rate
 
-# Energy / Hydration / Mental / Temperature drains use the same trick:
-# zero out the vanilla `gameData.xpXXX` stat bonus so base class's built-in
-# (1 - xpXXX * 0.08) multiplier becomes 1.0, then scale `delta` so the net
-# drain rate ends up at `delta * our_multiplier / N`. Identical output to
-# the old full-replacement but preserves the override chain.
+# All stat-drain overrides follow the community wiki's canonical chain
+# pattern: call super() first to let the whole chain (base + any mod
+# between us and base) do its thing, then adjust the delta it produced
+# by our skill-based multiplier. No shared-state mutation — we never
+# touch gameData.xp<Stat> across the super call, which avoids the
+# timing + save-race hazards that injection has.
 
 func Energy(delta):
     if xp_mod == null or gameData.starvation:
         super(delta)
         return
-    var bonus = xp_mod.get_level(3) * xp_mod.cfg_hunger_reduce + xp_mod.prestige_hunger_bonus()
-    var saved = gameData.xpHunger
-    gameData.xpHunger = 0
-    super(delta * (1.0 - bonus))
-    gameData.xpHunger = saved
+    var bonus: float = xp_mod.get_level(3) * xp_mod.cfg_hunger_reduce + xp_mod.prestige_hunger_bonus()
+    var before: float = gameData.energy
+    super(delta)
+    var drained: float = before - gameData.energy
+    if drained > 0.0:
+        gameData.energy = before - drained * (1.0 - bonus)
 
 func Hydration(delta):
     if xp_mod == null or gameData.dehydration:
         super(delta)
         return
-    var bonus = xp_mod.get_level(4) * xp_mod.cfg_thirst_reduce + xp_mod.prestige_thirst_bonus()
-    var saved = gameData.xpThirst
-    gameData.xpThirst = 0
-    super(delta * (1.0 - bonus))
-    gameData.xpThirst = saved
+    var bonus: float = xp_mod.get_level(4) * xp_mod.cfg_thirst_reduce + xp_mod.prestige_thirst_bonus()
+    var before: float = gameData.hydration
+    super(delta)
+    var drained: float = before - gameData.hydration
+    if drained > 0.0:
+        gameData.hydration = before - drained * (1.0 - bonus)
 
 func Mental(delta):
-    # Heat regen uses raw delta, not the mental multiplier — forward
-    # unscaled in that case so the +delta/4 regen in base isn't distorted.
+    # Heat branch in base is a regen (+delta/4) not a drain, and the
+    # insanity branch is its own thing — neither should get scaled.
     if xp_mod == null or gameData.heat or gameData.insanity:
         super(delta)
         return
-    var bonus = xp_mod.get_level(5) * xp_mod.cfg_mental_reduce + xp_mod.prestige_mental_bonus()
-    var saved = gameData.xpMental
-    gameData.xpMental = 0
-    super(delta * (1.0 - bonus))
-    gameData.xpMental = saved
+    var bonus: float = xp_mod.get_level(5) * xp_mod.cfg_mental_reduce + xp_mod.prestige_mental_bonus()
+    var before: float = gameData.mental
+    super(delta)
+    var drained: float = before - gameData.mental
+    if drained > 0.0:
+        gameData.mental = before - drained * (1.0 - bonus)
 
-# Stamina has both drain (staminaMult applies) and regen (no mult). We
-# can't scale delta without distorting regen, so inject `xpStamina` at the
-# equivalent level instead — base's `1 - xpStamina * 0.10` formula will
-# produce our desired multiplier on drains. Regen branches don't use the
-# multiplier so they pass through untouched.
+# Stamina has both drain (scale by our multiplier) and regen (unscaled).
+# The scaled-diff trick handles both automatically: if super regenerated
+# stamina (delta positive), we don't apply the reducer.
 func Stamina(delta):
     if xp_mod == null:
         super(delta)
         return
-    var bonus = xp_mod.get_level(1) * xp_mod.cfg_stamina_reduce + xp_mod.prestige_stamina_bonus()
-    var saved = gameData.xpStamina
-    gameData.xpStamina = int(round(bonus / 0.10))
+    var bonus: float = xp_mod.get_level(1) * xp_mod.cfg_stamina_reduce + xp_mod.prestige_stamina_bonus()
+    var body_before: float = gameData.bodyStamina
+    var arm_before: float = gameData.armStamina
     super(delta)
-    gameData.xpStamina = saved
+    var body_drained: float = body_before - gameData.bodyStamina
+    var arm_drained: float = arm_before - gameData.armStamina
+    if body_drained > 0.0:
+        gameData.bodyStamina = body_before - body_drained * (1.0 - bonus)
+    if arm_drained > 0.0:
+        gameData.armStamina = arm_before - arm_drained * (1.0 - bonus)
 
-# Clamp: base caps health at `100 + xpHealth * 5`. We want
-# `100 + (skill_level * cfg_hp_per_level + prestige_hp_bonus)`. Inject the
-# equivalent xpHealth (rounded up so base's clamp doesn't trim us below
-# the intended max) then re-clamp precisely afterward.
+# Clamp is a full replacement — the canonical "super-first then modify"
+# pattern only works when our modification TIGHTENS what super did. Our
+# max HP is LOOSER than base's (`100 + xpHealth*5`) whenever the player
+# has prestige ranks or a non-default cfg_hp_per_level, and a post-super
+# clampf can't raise health above the value base just clamped it down
+# to. Full replacement is the correct move here; chain compat loss for
+# Clamp specifically is acceptable (no known mod overrides it).
 func Clamp():
-    if xp_mod == null:
-        super()
-        return
-    var extra: float = xp_mod.get_level(0) * xp_mod.cfg_hp_per_level + xp_mod.prestige_hp_bonus()
-    var saved: int = gameData.xpHealth
-    gameData.xpHealth = int(ceil(extra / 5.0))
-    super()
-    gameData.xpHealth = saved
-    gameData.health = clampf(gameData.health, 0, 100.0 + extra)
+    var maxHP = 100.0
+    if xp_mod:
+        maxHP += xp_mod.get_level(0) * xp_mod.cfg_hp_per_level + xp_mod.prestige_hp_bonus()
+    gameData.health = clampf(gameData.health, 0, maxHP)
+    gameData.energy = clampf(gameData.energy, 0, 100)
+    gameData.hydration = clampf(gameData.hydration, 0, 100)
+    gameData.mental = clampf(gameData.mental, 0, 100)
+    gameData.temperature = clampf(gameData.temperature, 0, 100)
+    gameData.cat = clampf(gameData.cat, 0, 100)
+    gameData.bodyStamina = clampf(gameData.bodyStamina, 0, 100)
+    gameData.armStamina = clampf(gameData.armStamina, 0, 100)
+    gameData.oxygen = clampf(gameData.oxygen, 0, 100)
 
 func Death():
     if xp_mod and xp_mod.cfg_death_resets:
