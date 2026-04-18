@@ -1,5 +1,14 @@
 # XP & Skills System — Changelog
 
+### v2.5.4
+- **Fixed: community-reported crash when opening containers with skill-book loot rolls.** The generated pickup `.tscn` referenced `res://Items/Books/Files/MS_Book.obj` as a path-only `ext_resource` — no UID. Godot's resource loader resolves UID first and falls back to path, and the fallback has proven fragile under certain mod-load orders (instantiation can fail after a few seconds of gameplay). We now parse `MS_Book.obj` ourselves at boot, save the triangulated `ArrayMesh` to `user://XPSkillbook_Mesh.res` (compressed), and reference that stable user-path from every pickup scene. Same visual result, no UID dependency.
+- **Hardened dropped/placed/respawned pickups.** Explicit `add_to_group("Item")` guard after instantiating a pickup so the raycast-based interactor can always detect it, even if any future .tscn parsing oddity drops the group tag. Should fix the "can't pick up a book I just dropped / bought" reports.
+- **Removed the random door-knocking SFX** from the Scavenger skill proc (~0.2% chance cue that was meant as an easter egg — community didn't love it). Only the regular Scavenger search sound plays now.
+- **MCM: Scavenger SFX controls.** Two new entries:
+  - **Scavenger SFX Enabled** — turn the bonus-loot sound cue off entirely (silent scavenging).
+  - **Scavenger SFX Volume (%)** — 0–100 linear, mapped via `linear_to_db` so 100 is unchanged and 0 is silent.
+- Internal: skill-book cache version bumped to v4 so the pickup `.tscn` gets regenerated with the new mesh path on next launch (one-time regen, subsequent boots use the cache). `door.mp3` file removed from the mod bundle.
+
 ### v2.5.3
 - **Character.gd overrides now chain `super()`** for `Energy`, `Hydration`, `Mental`, `Stamina`, `Temperature`, and `Clamp`. Previously all six were full replacements, which silently dropped any other Character.gd-overriding mod's logic (e.g., an injuries rework mod layered on top).
 - **Math preserved exactly at default MCM values.** The rewrites use two techniques:

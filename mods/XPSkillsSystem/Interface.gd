@@ -45,6 +45,11 @@ func _place_skillbook(scene: PackedScene):
         return
     var pickup = scene.instantiate()
     map.add_child(pickup)
+    # Defensive: ensure the pickup is in the Item group so Interactor's
+    # raycast can detect it. The .tscn header declares this, but a
+    # paranoid re-add guards against any scene-tree oddity.
+    if !pickup.is_in_group("Item"):
+        pickup.add_to_group("Item")
     pickup.slotData.Update(contextItem.slotData)
     placer.ContextPlace(pickup)
     if contextGrid:
@@ -94,6 +99,8 @@ func _drop_skillbook(target, scene: PackedScene):
         rot = Vector3(-25, camera.rotation_degrees.y + 180 + randf_range(-45, 45), 45)
     var pickup = scene.instantiate()
     map.add_child(pickup)
+    if !pickup.is_in_group("Item"):
+        pickup.add_to_group("Item")
     pickup.position = pos
     pickup.rotation_degrees = rot
     pickup.linear_velocity = dir * force
