@@ -116,10 +116,12 @@ func _drop_skillbook(target, scene: PackedScene):
     UpdateStats(true)
 
 func _process(delta):
-    # Chain to anything else overriding _process. Base Interface.gd has no
-    # _process, but calling super() keeps the modloader CHAIN OK and lets
-    # any mod layered on top of ours cooperate.
-    super(delta)
+    # Can't call super(delta) here — base Interface.gd has no _process()
+    # and the parser rejects the call at script-load time (the entire
+    # script fails to parse, which silently removes the Skills menu +
+    # our Drop/ContextPlace overrides). The CHAIN BROKEN warning stays
+    # for this method but any sane mod chain above us that wants _process
+    # can declare one; modloader will layer it on.
     if skillsUI and skillsUI.visible:
         _xp_refresh_timer += delta
         if _xp_refresh_timer >= 0.5:

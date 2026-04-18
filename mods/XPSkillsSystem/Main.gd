@@ -270,7 +270,7 @@ const SKILLBOOK_CACHE_PATH: String = "user://XPSkillsBookCache.cfg"
 # books appear in the Generalist trader's supply. v4 = pickup references
 # the runtime-parsed user://XPSkillbook_Mesh.res instead of the vanilla
 # res://Items/Books/Files/MS_Book.obj (UID-resolution flakiness fix).
-const SKILLBOOK_CACHE_VERSION: int = 4
+const SKILLBOOK_CACHE_VERSION: int = 5
 
 func _init_skillbook_items():
     # Fast path: if the source PNGs haven't changed since the last rebuild
@@ -594,72 +594,30 @@ func _build_skillbook_tetris_tscn(book_file: String, icon_path: String) -> Strin
     return "\n".join(lines)
 
 func _ensure_skillbook_mesh():
-    # Parse res://Items/Books/Files/MS_Book.obj once and cache it at
-    # SKILLBOOK_MESH_PATH so pickup scenes can reference a stable user://
-    # path instead of the vanilla .obj (which relies on UID resolution).
+    # Load the vanilla book mesh via the Godot resource loader (which
+    # reads the IMPORTED ArrayMesh — the raw .obj source is stripped
+    # from the PCK in packaged builds, so FileAccess can't read it as
+    # text) and save it to a stable user:// path that pickup .tscn
+    # files can reference without UID resolution.
     if FileAccess.file_exists(SKILLBOOK_MESH_PATH):
         return
     var obj_path: String = "res://Items/Books/Files/MS_Book.obj"
-    var mesh: ArrayMesh = _parse_obj_mesh(obj_path)
+    if !ResourceLoader.exists(obj_path):
+        push_warning("[XP Skills] Vanilla book mesh not found at " + obj_path + " — skill books will fall back to BoxMesh")
+        return
+    var mesh = ResourceLoader.load(obj_path)
     if mesh == null:
-        push_warning("[XP Skills] Failed to parse " + obj_path + " — books will fall back to BoxMesh")
+        push_warning("[XP Skills] Failed to load " + obj_path + " — skill books will fall back to BoxMesh")
         return
     ResourceSaver.save(mesh, SKILLBOOK_MESH_PATH, ResourceSaver.FLAG_COMPRESS)
 
-func _parse_obj_mesh(path: String) -> ArrayMesh:
-    # Minimal OBJ parser (adapted from the Cash-System mod). MS_Book.obj
-    # is triangulated and uses the `v/vt/vn` face format, so this handles
-    # it correctly. Multiple surfaces split on usemtl boundaries.
-    var file := FileAccess.open(path, FileAccess.READ)
-    if file == null:
-        return null
-    var v: Array = []
-    var vt: Array = []
-    var vn: Array = []
-    var surfs: Array = [[]]
-    var cur: int = 0
-    while !file.eof_reached():
-        var line: String = file.get_line().strip_edges()
-        if line.begins_with("v "):
-            var p = line.split(" ", false)
-            v.append(Vector3(float(p[1]), float(p[2]), float(p[3])))
-        elif line.begins_with("vt "):
-            var p = line.split(" ", false)
-            vt.append(Vector2(float(p[1]), float(p[2])))
-        elif line.begins_with("vn "):
-            var p = line.split(" ", false)
-            vn.append(Vector3(float(p[1]), float(p[2]), float(p[3])))
-        elif line.begins_with("usemtl "):
-            if surfs[cur].size() > 0:
-                surfs.append([])
-                cur += 1
-        elif line.begins_with("f "):
-            var parts = line.split(" ", false)
-            for i in range(3, parts.size()):
-                for idx in [1, i, i - 1]:
-                    surfs[cur].append(parts[idx])
-    file.close()
-    var mesh := ArrayMesh.new()
-    for surf in surfs:
-        if surf.size() == 0:
-            continue
-        var st := SurfaceTool.new()
-        st.begin(Mesh.PRIMITIVE_TRIANGLES)
-        for face_str in surf:
-            var c = face_str.split("/")
-            if c.size() > 2 and c[2] != "":
-                st.set_normal(vn[int(c[2]) - 1])
-            if c.size() > 1 and c[1] != "":
-                st.set_uv(vt[int(c[1]) - 1])
-            st.add_vertex(v[int(c[0]) - 1])
-        st.generate_tangents()
-        mesh = st.commit(mesh)
-    return mesh
-
 func _build_skillbook_pickup_tscn(book_file: String, tint: Color, cover_tex_path: String = "") -> String:
-    # Reuses the vanilla book mesh (MS_Book.obj). If cover_tex_path is set,
-    # the material references that Texture2D via ExtResource("6"); otherwise
-    # we fall back to a flat albedo_color tint.
+    # Reuses the vanilla book mesh saved at SKILLBOOK_MESH_PATH. If that
+    # mesh file isn't present (ResourceLoader couldn't load the vanilla
+    # .obj for some reason) we fall back to a simple BoxMesh sub-resource
+    # so the scene still loads cleanly — an ext_resource to a missing
+    # file would fail the entire .tscn parse.
+    var has_mesh: bool = FileAccess.file_exists(SKILLBOOK_MESH_PATH)
     var lines := PackedStringArray()
     lines.append('[gd_scene format=3]')
     lines.append('')
@@ -667,7 +625,8 @@ func _build_skillbook_pickup_tscn(book_file: String, tint: Color, cover_tex_path
     lines.append('[ext_resource type="Script" path="res://Scripts/Pickup.gd" id="2"]')
     lines.append('[ext_resource type="Resource" path="user://' + book_file + '.tres" id="3"]')
     lines.append('[ext_resource type="Script" path="res://Scripts/SlotData.gd" id="4"]')
-    lines.append('[ext_resource type="ArrayMesh" path="' + SKILLBOOK_MESH_PATH + '" id="5"]')
+    if has_mesh:
+        lines.append('[ext_resource type="ArrayMesh" path="' + SKILLBOOK_MESH_PATH + '" id="5"]')
     if cover_tex_path != "":
         lines.append('[ext_resource type="Texture2D" path="' + cover_tex_path + '" id="6"]')
     lines.append('')
@@ -683,6 +642,10 @@ func _build_skillbook_pickup_tscn(book_file: String, tint: Color, cover_tex_path
         lines.append('albedo_color = Color(%s, %s, %s, 1)' % [tint.r, tint.g, tint.b])
     lines.append('roughness = 0.85')
     lines.append('')
+    if !has_mesh:
+        lines.append('[sub_resource type="BoxMesh" id="BoxMesh_1"]')
+        lines.append('size = Vector3(0.14, 0.2, 0.02)')
+        lines.append('')
     lines.append('[sub_resource type="BoxShape3D" id="BoxShape_1"]')
     lines.append('size = Vector3(0.14, 0.2, 0.02)')
     lines.append('')
@@ -698,7 +661,10 @@ func _build_skillbook_pickup_tscn(book_file: String, tint: Color, cover_tex_path
     lines.append('[node name="Mesh" type="MeshInstance3D" parent="."]')
     lines.append('layers = 4')
     lines.append('visibility_range_end = 25.0')
-    lines.append('mesh = ExtResource("5")')
+    if has_mesh:
+        lines.append('mesh = ExtResource("5")')
+    else:
+        lines.append('mesh = SubResource("BoxMesh_1")')
     lines.append('surface_material_override/0 = SubResource("Material_1")')
     lines.append('')
     lines.append('[node name="Collision" type="CollisionShape3D" parent="."]')
