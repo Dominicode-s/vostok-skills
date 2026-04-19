@@ -166,7 +166,13 @@ func UpdateStats(updateLabels: bool):
     var xp_mod = Engine.get_meta("XPMain", null)
     if xp_mod == null:
         return
-    var bonus: float = xp_mod.get_level(2) * xp_mod.cfg_carry_per_level + xp_mod.prestige_carry_bonus()
+    # Base already added `gameData.xpCarry * 2.0` using our synced Pack Mule
+    # level (_sync_to_gamedata every frame). Only add the *delta* from our
+    # configured per-level value, or we'd double-count the vanilla 2 kg/lvl
+    # — which made base's pre-super Overweight check disagree with ours and
+    # spam the overweight SFX on every UpdateStats tick (v2.5.6 report).
+    var level: int = xp_mod.get_level(2)
+    var bonus: float = level * (xp_mod.cfg_carry_per_level - 2.0) + xp_mod.prestige_carry_bonus()
     if bonus == 0.0:
         return
     currentInventoryCapacity += bonus
