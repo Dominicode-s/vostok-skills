@@ -1,5 +1,29 @@
 # XP & Skills System — Changelog
 
+### v3.0.0 — MML v3.0.0 compatibility
+
+**Requires Metro Mod Loader v3.0.0 or newer.** Incompatible with earlier MML versions. Also requires the post-April-2026 Road to Vostok build (the one that removed the `xp*` stub fields from vanilla `GameData.gd`).
+
+#### Override system migration
+- **Moved all `Character.gd` and `Interface.gd` overrides from `take_over_path()` to MML's RTVModLib hook API** (`lib.hook(...)`). Under MML v3.0.0, three mods (Cash / Secure Container / XP & Skills) all calling `take_over_path()` on `res://Scripts/Interface.gd` tripped the loader's "CHAIN BROKEN" warning and silently broke Drop/Place for every item. Hook-based overrides don't chain — each mod registers independently, no ordering issues.
+- **Character hooks** (14 total): `character-health-post`, `character-energy-pre`/`-post`, `character-hydration-pre`/`-post`, `character-mental-pre`/`-post`, `character-stamina-pre`/`-post`, `character-temperature-pre`/`-post`, `character-clamp` (replace + skip_super — wider max HP from prestige), `character-death-pre`, `character-consume-post`. Drain-scaling methods use pre/post pairs so the "compute what super drained, apply reducer" math is preserved without mutating shared state.
+- **Interface hooks** (8 total): `interface-drop`, `interface-contextplace`, `interface-open-post`, `interface-hidealltools-post`, `interface-disabletools-post`, `interface-enabletools-post`, `interface-loaddefaulttool-post`, `interface-updatestats-post`.
+
+#### Data migration
+- **Decoupled from `gameData.xp*` fields.** The post-April-2026 vanilla `GameData.gd` no longer declares `xp`, `xpHealth`, `xpRegen`, etc. — those fields were injected by the old modded PCK. `XPMain` autoload is now the single source of truth for XP levels and totals; `_sync_to_gamedata()` is a no-op (kept as a stub so the `SaveXP()` call site doesn't break).
+- Removed the `Character.Health()` workaround that zero'd `gameData.xpRegen` across `super()` — vanilla no longer has the hardcoded `xpRegen * 0.2` block, so the bypass isn't needed.
+- Save compat preserved — existing `user://XPData.cfg` / per-profile files load unchanged; prestige ranks, trader task counts, and skillbook pools all carry forward.
+
+#### File changes
+- **Deleted** `mods/XPSkillsSystem/Character.gd` and `mods/XPSkillsSystem/Interface.gd` subclasses.
+- **Removed** `overrideScript()` helper from `Main.gd`.
+- **Added** `_register_character_hooks()` and `_register_interface_hooks()` called from `_ready`, plus ~600 lines of hook callbacks and UI-builder helpers migrated from the old Interface.gd subclass.
+- The `_process` UI-refresh polling for the Skills panel (previously an override of Interface's non-existent `_process`) now lives in `XPMain._process()` via `_poll_skills_ui_refresh(delta)`.
+
+#### Behavioral notes
+- `Clamp()` remains a **full replacement** (replace hook + `skip_super()`). Chain-compat loss is intentional per v2.5.6's rationale: vanilla's hardcoded 100 cap would re-clamp our wider max HP downward.
+- Carry-weight bonus from Pack Mule now applies via `interface-updatestats-post`, after vanilla (and any mod between us and vanilla) computes base capacity.
+
 ### v2.5.6
 - **Fixed: Vitality skill not raising max HP above 100** (community report, supersedes v2.5.5 with the same subject). Previous `Clamp()` used an "injection" pattern — mutate `gameData.xpHealth`, call `super()`, restore — which violated the community modding wiki's canonical chain pattern ("call super() first, then modify the result") and leaked shared state across the super call. Reverted `Clamp()` to direct full replacement: compute our `maxHP` from `xp_mod` state and clamp in one line, no state mutation, no timing dependency on `_sync_to_gamedata`. The trade-off is losing chain compat for `Clamp()` specifically — accepted because the wiki pattern can't loosen a bound that `super` already tightened (our max HP is higher than base's when prestige ranks or non-default `cfg_hp_per_level` are in play), and no other mod currently overrides `Clamp`.
 - **Refactored Energy / Hydration / Mental / Stamina to the wiki's canonical chain pattern.** Previous code used the same "inject → super → restore" trick that broke `Clamp`. Rewrote to: record `gameData.<stat>` before super, let super drain at vanilla rate, then scale the drain by `(1 - our_bonus)` — chain compat preserved (any upstream mod's contribution to the drain gets scaled proportionally), no shared-state mutation, no timing fragility. At default MCM values the net drain is arithmetically identical to both the pre-v2.5.3 full-replacement and the v2.5.3 injection.
