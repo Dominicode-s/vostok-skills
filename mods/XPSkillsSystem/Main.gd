@@ -51,6 +51,9 @@ var _sfx_search: AudioStreamMP3
 # Scavenger SFX config (MCM)
 var cfg_scavenger_sfx_enabled: bool = true
 var cfg_scavenger_sfx_volume: int = 80  # 0-100 (%) mapped to dB
+# Scavenger tooltip offsets (MCM)
+var cfg_scavenger_tt_xoffset: int = 20
+var cfg_scavenger_tt_yoffset: int = 60
 
 # Composure — cache the hit-shake Node3D (runs res://Scripts/Damage.gd) so we
 # can dampen its rotation in _physics_process without overriding the script.
@@ -1122,7 +1125,8 @@ func _show_scavenge_notify(ui_manager, item_name: String):
     label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2))
     label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     label.anchors_preset = Control.PRESET_CENTER_TOP
-    label.offset_top = 60
+    label.offset_top = cfg_scavenger_tt_yoffset
+    label.offset_left = cfg_scavenger_tt_xoffset
     label.z_index = 100
     ui_manager.add_child(label)
     var tween = label.create_tween()
@@ -1716,6 +1720,23 @@ func _register_mcm():
         "menu_pos" = 50
     })
 
+    # ─── Scavenger Tooltip ───
+    _config.set_value("Int", "cfg_scavenger_tt_xoffset", {
+        "name" = "Scavenger Tooltip X Offset",
+        "tooltip" = "X axis offset for the scavenger tooltip from the top left of the screen.",
+        "default" = 20, "value" = 20,
+        "minRange" = 0, "maxRange" = 2000,
+        "menu_pos" = 51
+    })
+
+    _config.set_value("Int", "cfg_scavenger_tt_yoffset", {
+        "name" = "Scavenger Tooltip Y Offset",
+        "tooltip" = "Y axis offset for the scavenger tooltip from the top left of the screen",
+        "default" = 60, "value" = 60,
+        "minRange" = 0, "maxRange" = 2000,
+        "menu_pos" = 52
+    })
+
     if !FileAccess.file_exists(MCM_FILE_PATH + "/config.ini"):
         DirAccess.open("user://").make_dir_recursive(MCM_FILE_PATH)
         _config.save(MCM_FILE_PATH + "/config.ini")
@@ -1809,6 +1830,9 @@ func _apply_mcm_config(config: ConfigFile):
     # Scavenger SFX
     cfg_scavenger_sfx_enabled = _mcm_val(config, "Bool", "cfg_scavenger_sfx_enabled", cfg_scavenger_sfx_enabled)
     cfg_scavenger_sfx_volume = int(_mcm_val(config, "Int", "cfg_scavenger_sfx_volume", cfg_scavenger_sfx_volume))
+    # Scavenger Tooltip Offsets
+    cfg_scavenger_tt_xoffset = int(_mcm_val(config, "Int", "cfg_scavenger_tt_xoffset", cfg_scavenger_tt_xoffset))
+    cfg_scavenger_tt_yoffset = int(_mcm_val(config, "Int", "cfg_scavenger_tt_yoffset", cfg_scavenger_tt_yoffset))
     # Rebuild caps array from the single non-Vitality cap slider. Vitality
     # stays uncapped (-1); every other slot uses the MCM value.
     var shared_cap = int(_mcm_val(config, "Int", "cfg_prestige_cap", 10))
@@ -1845,6 +1869,8 @@ func LoadConfig():
         cfg_skillbook_dual_multiplier = float(cfg.get_value("skillbooks", "dual_multiplier", 0.6))
         cfg_scavenger_sfx_enabled = cfg.get_value("scavenger", "sfx_enabled", true)
         cfg_scavenger_sfx_volume = int(cfg.get_value("scavenger", "sfx_volume", 80))
+        cfg_scavenger_tt_xoffset = int(cfg.get_value("scavenger", "tt_xoffset", 80))
+        cfg_scavenger_tt_yoffset = int(cfg.get_value("scavenger", "tt_yoffset", 80))
         for sid in skill_ids:
             cfg_skill_enabled[sid] = cfg.get_value("toggles", sid, true)
         var ml = cfg.get_value("skills", "max_levels", "10,10,10,10,10,10,5,10,10,10,5,5,5")
@@ -1880,6 +1906,8 @@ func SaveConfig():
     cfg.set_value("skillbooks", "dual_multiplier", cfg_skillbook_dual_multiplier)
     cfg.set_value("scavenger", "sfx_enabled", cfg_scavenger_sfx_enabled)
     cfg.set_value("scavenger", "sfx_volume", cfg_scavenger_sfx_volume)
+    cfg.set_value("scavenger", "tt_xoffset", cfg_scavenger_tt_xoffset)
+    cfg.set_value("scavenger", "tt_yoffset", cfg_scavenger_tt_yoffset)
     for sid in skill_ids:
         cfg.set_value("toggles", sid, cfg_skill_enabled[sid])
     var ml = ",".join(cfg_max_levels.map(func(v): return str(v)))
