@@ -7,3 +7,6 @@ priority=0
 XPMain="res://mods/XPSkillsSystem/Main.gd"
 [updates]
 modworkshop=55940
+
+[dependencies]
+optional=["doinkoink-mcm"]
