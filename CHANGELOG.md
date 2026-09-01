@@ -1,5 +1,10 @@
 # XP & Skills System — Changelog
 
+### v3.0.1 — MCM dependency declaration
+
+- **Declared Mod Configuration Menu as an optional dependency** (`[dependencies] optional=["doinkoink-mcm"]` in `mod.txt`). MCM is still detected at runtime via `MCM_Helpers.tres` and the mod runs fine without it, but the declaration makes the loader mount MCM before this mod's autoload reaches `_register_mcm()`, closing a load-order race that could leave the config page unregistered.
+- No gameplay change.
+
 ### v3.0.0 — MML v3.0.0 compatibility
 
 **Requires Metro Mod Loader v3.0.0 or newer.** Incompatible with earlier MML versions. Also requires the post-April-2026 Road to Vostok build (the one that removed the `xp*` stub fields from vanilla `GameData.gd`).
