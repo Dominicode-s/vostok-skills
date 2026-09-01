@@ -1,5 +1,9 @@
 # XP & Skills System — Changelog
 
+### v3.0.2 — Silence the XPInterface meta error
+
+- **Removed a spurious engine error from the log.** Two call sites read the cached Interface node with `Engine.get_meta("XPInterface", null)`. That reads as null-safe, and the `if ui:` guard did work, but Godot's `Object::get_meta` only returns the supplied default when it differs from `Variant()` — and `null` *is* `Variant()`, so it fell through to `ERR_FAIL_V_MSG` and printed `The object does not have any 'meta' values with the key 'XPInterface'` before returning null anyway. Both sites now check `Engine.has_meta()` first. Behaviour is unchanged; the log spam is gone.
+
 ### v3.0.1 — MCM dependency declaration
 
 - **Declared Mod Configuration Menu as an optional dependency** (`[dependencies] optional=["doinkoink-mcm"]` in `mod.txt`). MCM is still detected at runtime via `MCM_Helpers.tres` and the mod runs fine without it, but the declaration makes the loader mount MCM before this mod's autoload reaches `_register_mcm()`, closing a load-order race that could leave the config page unregistered.
