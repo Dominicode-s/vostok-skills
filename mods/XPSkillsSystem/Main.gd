@@ -52,7 +52,7 @@ var _sfx_search: AudioStreamMP3
 var cfg_scavenger_sfx_enabled: bool = true
 var cfg_scavenger_sfx_volume: int = 80  # 0-100 (%) mapped to dB
 # Scavenger tooltip offsets (MCM)
-var cfg_scavenger_tt_xoffset: int = 20
+var cfg_scavenger_tt_xoffset: int = 0
 var cfg_scavenger_tt_yoffset: int = 60
 
 # Composure — cache the hit-shake Node3D (runs res://Scripts/Damage.gd) so we
@@ -990,6 +990,7 @@ func _show_scavenge_notify(ui_manager, item_name: String):
     label.anchors_preset = Control.PRESET_CENTER_TOP
     label.offset_top = cfg_scavenger_tt_yoffset
     label.offset_left = cfg_scavenger_tt_xoffset
+    label.offset_right = cfg_scavenger_tt_xoffset
     label.z_index = 100
     ui_manager.add_child(label)
     var tween = label.create_tween()
@@ -1539,15 +1540,15 @@ func _register_mcm():
     # ─── Scavenger Tooltip ───
     _config.set_value("Int", "cfg_scavenger_tt_xoffset", {
         "name" = "Scavenger Tooltip X Offset",
-        "tooltip" = "X axis offset for the scavenger tooltip from the top left of the screen.",
-        "default" = 20, "value" = 20,
-        "minRange" = 0, "maxRange" = 2000,
+        "tooltip" = "Horizontal offset for the scavenger tooltip from the top centre of the screen.",
+        "default" = 0, "value" = 0,
+        "minRange" = -1000, "maxRange" = 1000,
         "menu_pos" = 51
     })
 
     _config.set_value("Int", "cfg_scavenger_tt_yoffset", {
         "name" = "Scavenger Tooltip Y Offset",
-        "tooltip" = "Y axis offset for the scavenger tooltip from the top left of the screen",
+        "tooltip" = "Vertical offset for the scavenger tooltip from the top of the screen.",
         "default" = 60, "value" = 60,
         "minRange" = 0, "maxRange" = 2000,
         "menu_pos" = 52
@@ -1685,8 +1686,8 @@ func LoadConfig():
         cfg_skillbook_dual_multiplier = float(cfg.get_value("skillbooks", "dual_multiplier", 0.6))
         cfg_scavenger_sfx_enabled = cfg.get_value("scavenger", "sfx_enabled", true)
         cfg_scavenger_sfx_volume = int(cfg.get_value("scavenger", "sfx_volume", 80))
-        cfg_scavenger_tt_xoffset = int(cfg.get_value("scavenger", "tt_xoffset", 80))
-        cfg_scavenger_tt_yoffset = int(cfg.get_value("scavenger", "tt_yoffset", 80))
+        cfg_scavenger_tt_xoffset = int(cfg.get_value("scavenger", "tt_xoffset", 0))
+        cfg_scavenger_tt_yoffset = int(cfg.get_value("scavenger", "tt_yoffset", 60))
         for sid in skill_ids:
             cfg_skill_enabled[sid] = cfg.get_value("toggles", sid, true)
         var ml = cfg.get_value("skills", "max_levels", "10,10,10,10,10,10,5,10,10,10,5,5,5")
