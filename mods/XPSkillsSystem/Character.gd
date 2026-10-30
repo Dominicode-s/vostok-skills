@@ -67,7 +67,7 @@ func Stamina(delta):
     if arm_drained > 0.0:
         gameData.armStamina = arm_before - arm_drained * (1.0 - bonus)
 
-# Clamp: full replacement — max HP can be higher than base.
+# Clamp: full replacement, since max HP can be higher than base.
 func Clamp():
     var maxHP = 100.0
     if xp_mod:

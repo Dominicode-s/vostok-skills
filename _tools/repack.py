@@ -4,7 +4,7 @@
 Run from the repo root:
     python _tools/repack.py
 
-Godot mod loader expects forward-slash zip entries — PowerShell's
+Godot mod loader expects forward-slash zip entries; PowerShell's
 Compress-Archive writes backslashes, which silently breaks path resolution
 (the mod ends up inert with no errors). This script uses stdlib zipfile
 which writes forward slashes.

@@ -23,7 +23,7 @@ var _prestige_section: VBoxContainer = null  # wrapper so RebuildSkills can drop
 
 func ContextPlace():
     # Base ContextPlace calls Database.get(item.file) and fails for custom
-    # items. Same fix as Drop — use our catalogued pickup scene.
+    # items. Same fix as Drop: use our catalogued pickup scene.
     if contextItem and contextItem.slotData and contextItem.slotData.itemData:
         var f: String = str(contextItem.slotData.itemData.file)
         if f.begins_with("XPSkillbook_"):
@@ -63,7 +63,7 @@ func _place_skillbook(scene: PackedScene):
 
 func Drop(target):
     # Base Drop uses Database.get(file) and queue_frees items whose file
-    # isn't registered there — that would silently delete any skill book
+    # isn't registered there; that would silently delete any skill book
     # the player drops. Handle our custom items before delegating.
     if target and target.slotData and target.slotData.itemData:
         var f: String = str(target.slotData.itemData.file)
@@ -116,7 +116,7 @@ func _drop_skillbook(target, scene: PackedScene):
     UpdateStats(true)
 
 func _process(delta):
-    # Can't call super(delta) here — base Interface.gd has no _process()
+    # Can't call super(delta) here: base Interface.gd has no _process()
     # and the parser rejects the call at script-load time (the entire
     # script fails to parse, which silently removes the Skills menu +
     # our Drop/ContextPlace overrides). The CHAIN BROKEN warning stays
@@ -172,7 +172,7 @@ func UpdateStats(updateLabels: bool):
     currentInventoryCapacity += bonus
 
     # Re-run overweight + heavyGear checks with the adjusted capacity.
-    # Base Character.Overweight() is idempotent — calling with the same
+    # Base Character.Overweight() is idempotent; calling with the same
     # value a second time is a cheap no-op.
     if currentInventoryWeight > currentInventoryCapacity:
         if !gameData.overweight:
@@ -190,8 +190,6 @@ func UpdateStats(updateLabels: bool):
         if inventoryWeightPercentage > 1: inventoryWeight.modulate = Color.RED
         elif inventoryWeightPercentage >= 0.5: inventoryWeight.modulate = Color.YELLOW
         else: inventoryWeight.modulate = Color.GREEN
-
-# --- Skills UI ---
 
 func BuildSkillsUI():
     Engine.set_meta("XPInterface", self)
@@ -307,7 +305,7 @@ func _build_skill_rows():
         levelLabel.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
         row.add_child(levelLabel)
 
-        # Prestige badge — only visible when that skill has prestige ranks.
+        # Prestige badge, only visible when that skill has prestige ranks.
         var prestigeLabel = Label.new()
         prestigeLabel.text = ""
         prestigeLabel.custom_minimum_size.x = 32
@@ -468,13 +466,10 @@ func UpdateSkillsUI():
         else:
             row.button.text = "+" + str(nextCost) + " XP"
             row.button.disabled = xp_mod.xp < nextCost
-        # Prestige badge: show "✦N" when this skill has prestige ranks.
         var prank = xp_mod.get_prestige_count(i)
         if "prestige" in row and row.prestige != null:
             row.prestige.text = ("✦" + str(prank)) if prank > 0 else ""
     _update_prestige_ui(xp_mod)
-
-# ─── Prestige UI ──────────────────────────────────────────────
 
 func _build_prestige_section():
     # Wrap in a VBoxContainer so RebuildSkills can drop and recreate the
@@ -526,7 +521,7 @@ func _update_prestige_ui(xp_mod):
     var available = xp_mod.is_prestige_available()
     _prestige_button.disabled = not available
     if available:
-        _prestige_status_label.text = "All enabled skills maxed. Pick a stat to prestige — all XP and skill levels will be wiped in exchange for a permanent bonus to that stat."
+        _prestige_status_label.text = "All enabled skills maxed. Pick a stat to prestige: all XP and skill levels will be wiped in exchange for a permanent bonus to that stat."
         _prestige_status_label.add_theme_color_override("font_color", Color(0.55, 1.0, 0.55))
     else:
         _prestige_status_label.text = "Max every enabled skill to unlock Prestige. Prestige grants a permanent stat bonus that survives death, in exchange for wiping all XP and levels."
@@ -597,7 +592,6 @@ func _show_prestige_picker():
     sep2.custom_minimum_size.y = 4
     vbox.add_child(sep2)
 
-    # Scrollable list of prestigable skills.
     var scroll = ScrollContainer.new()
     scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
