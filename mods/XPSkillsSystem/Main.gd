@@ -2,7 +2,7 @@ extends Node
 
 var gameData = preload("res://Resources/GameData.tres")
 
-# New-game detection — marker file is wiped by FormatSave() on new game
+# New-game detection: marker file is wiped by FormatSave() on new game
 var _prev_menu: bool = false
 
 # Kill Attribution
@@ -14,32 +14,32 @@ var _last_fire_time: int = 0
 var _prev_grenade1: bool = false
 var _prev_grenade2: bool = false
 
-# Compat — AI death polling for kill XP (no AI.gd override needed)
+# Compat: AI death polling for kill XP (no AI.gd override needed)
 var _tracked_ai: Array = []
 var _pending_kills: Array = []
 
-# Compat — Container tracking for search XP (no LootContainer.gd override)
+# Compat: Container tracking for search XP (no LootContainer.gd override)
 var _awarded_containers: Dictionary = {}
 var _prev_interface: bool = false
 
-# Compat — Trade tracking (no Interface.gd trade hook needed)
+# Compat: Trade tracking (no Interface.gd trade hook needed)
 var _trade_btn: Button = null
 var _trade_connected: bool = false
 
-# Compat — Task tracking (no Trader.gd override needed)
+# Compat: Task tracking (no Trader.gd override needed)
 # Persisted per-trader completed-task counts, keyed by traderData.name.
 # Loader.LoadTrader() clears + repopulates tasksCompleted on interaction,
 # so an in-memory baseline would treat every re-populate as fresh completions.
 var _tracked_traders: Array = []
 var cfg_trader_task_counts: Dictionary = {}
 
-# Compat — Patty's Profiles: records the XPData path we last loaded. When
+# Compat for Patty's Profiles: records the XPData path we last loaded. When
 # _get_xp_data_path() starts returning a different path, we reload state.
 # Stays as the legacy path when Patty isn't installed, so the comparison
 # never fires and the compat layer is fully dormant.
 var _last_xp_path: String = ""
 
-# Compat — Speed bonus (no Controller.gd override needed)
+# Compat: Speed bonus (no Controller.gd override needed)
 # Base speeds are captured on first Controller contact so we amplify whatever
 # the game (or another mod) set as the real base, rather than hardcoded guesses.
 var _controller_ref: Node = null
@@ -55,11 +55,11 @@ var cfg_scavenger_sfx_volume: int = 80  # 0-100 (%) mapped to dB
 var cfg_scavenger_tt_xoffset: int = 0
 var cfg_scavenger_tt_yoffset: int = 60
 
-# Composure — cache the hit-shake Node3D (runs res://Scripts/Damage.gd) so we
+# Composure: cache the hit-shake Node3D (runs res://Scripts/Damage.gd) so we
 # can dampen its rotation in _physics_process without overriding the script.
 var _damage_node: Node3D = null
 
-# Recoil — weapon rigs are preloaded in Database.gd so take_over_path can't
+# Recoil: weapon rigs are preloaded in Database.gd so take_over_path can't
 # replace the script. Instead we modify recoil data values when equipped.
 
 # XP State
@@ -79,21 +79,21 @@ var xpSpeed: int = 0
 var xpScavenger: int = 0
 var xpComposure: int = 0
 
-# Config — XP rewards
+# Config: XP rewards
 var cfg_xp_container: float = 1.0
 var cfg_xp_kill: int = 25
 var cfg_xp_boss: int = 100
 var cfg_xp_trade: int = 10
 var cfg_xp_task: int = 50
 
-# Container XP fraction accumulator — persists progress when the per-search
+# Container XP fraction accumulator: persists progress when the per-search
 # reward is fractional (e.g. 0.3), so every ~3–4 containers grants 1 XP.
 var _container_xp_fraction: float = 0.0
 
-# Config — Death behavior
+# Config: Death behavior
 var cfg_death_resets: bool = true
 
-# Config — Skill bonuses per level
+# Config: Skill bonuses per level
 var cfg_hp_per_level: float = 5.0
 var cfg_stamina_reduce: float = 0.10
 var cfg_carry_per_level: float = 2.0
@@ -108,7 +108,7 @@ var cfg_speed_bonus: float = 0.04
 var cfg_scavenger_chance: float = 0.05
 var cfg_shake_reduce: float = 0.10
 
-# Skill Books — 9 items built at runtime from SKILLBOOK_DEFS.
+# Skill Books: 9 items built at runtime from SKILLBOOK_DEFS.
 var cfg_skillbooks_enabled: bool = true
 var cfg_skillbook_base_xp: int = 200
 var cfg_skillbook_dual_multiplier: float = 0.6
@@ -133,7 +133,7 @@ const SKILLBOOK_DEFS: Array = [
 # Needed for fast lookup on Consume and for shelter respawn.
 var _skillbook_catalog: Dictionary = {}  # file -> {skills: Array, item_data: ItemData, pickup: PackedScene}
 
-# Shelter persistence — re-instantiate skill-book pickups saved in shelter .tres
+# Shelter persistence: re-instantiate skill-book pickups saved in shelter .tres
 var _sb_last_scene_name: String = ""
 
 # Runtime-parsed book mesh to avoid UID-resolution issues in some mod configs.
@@ -141,13 +141,13 @@ const SKILLBOOK_MESH_PATH: String = "user://XPSkillbook_Mesh.res"
 
 var skill_xp_pool: Dictionary = {}
 
-# Config — Skill max levels
+# Config: Skill max levels
 var cfg_max_levels: Array = [10, 10, 10, 10, 10, 10, 5, 10, 10, 10, 5, 5, 5]
 
-# Config — Skill cost bases
+# Config: Skill cost bases
 var cfg_cost_bases: Array = [25, 25, 20, 20, 20, 20, 50, 20, 25, 25, 30, 30, 25]
 
-# Config — Skill enabled toggles (index matches skill order)
+# Config: Skill enabled toggles (index matches skill order)
 var skill_ids: Array = ["vitality", "endurance", "pack_mule", "hunger_resist", "thirst_resist", "iron_will", "regeneration", "cold_resistance", "stealth", "recoil_control", "athleticism", "scavenger", "composure"]
 var cfg_skill_enabled: Dictionary = {
 	"vitality": true, "endurance": true, "pack_mule": true,
@@ -157,7 +157,6 @@ var cfg_skill_enabled: Dictionary = {
 	"composure": true
 }
 
-# ─── Prestige ─────────────────────────────────────────────────
 # Permanent bonuses earned by wiping all XP + skill levels. Unlocked
 # when every enabled skill is at its max level. Each prestige rank
 # adds a small additive bonus ON TOP of the skill tree (not baked
@@ -189,7 +188,7 @@ var cfg_prestige_composure: float = 0.02  # Composure: -2% camera shake
 # Order matches skill_ids.
 var cfg_prestige_caps: Array = [-1, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10]
 
-# Runtime prestige state — skill_id -> rank count.
+# Runtime prestige state: skill_id -> rank count.
 var prestige_counts: Dictionary = {}
 
 # MCM integration
@@ -229,11 +228,11 @@ func _install_overrides():
     _install_skillbook_hooks()
 
 func _install_skillbook_hooks():
-    # Emergency bypass — drop this marker file if skill-book init ever
+    # Emergency bypass: drop this marker file if skill-book init ever
     # misbehaves. Keeps the rest of the mod (XP, skills, prestige) working
     # while the books are disabled.
     if FileAccess.file_exists("user://XPSkillsDisableBooks.txt"):
-        print("[XP Skills] Bypass marker found — skipping skill-book init")
+        print("[XP Skills] Bypass marker found - skipping skill-book init")
         return
     _ensure_skillbook_mesh()
     # Catches SKILLBOOK_DEFS drift at boot instead of silently failing
@@ -245,7 +244,7 @@ func _install_skillbook_hooks():
     if _skillbook_catalog.is_empty():
         _init_skillbook_items()
     else:
-        # Already initialized — flipping the MCM toggle shouldn't recreate
+        # Already initialized; flipping the MCM toggle shouldn't recreate
         # every resource and invalidate world/inventory references. Just
         # update the consumable flag and let the loot injector re-run.
         for book_file in _skillbook_catalog.keys():
@@ -274,14 +273,14 @@ func _init_skillbook_items():
             all_present = false
             break
     if cached_sig != "" and cached_sig == sig and all_present:
-        print("[XP Skills] Skill-book cache hit — loading pre-built resources")
+        print("[XP Skills] Skill-book cache hit - loading pre-built resources")
         for def in SKILLBOOK_DEFS:
             if !_load_cached_skillbook(def):
-                # A cached file failed to load — fall back to rebuild and
+                # A cached file failed to load; fall back to rebuild and
                 # stop using the cache for this boot.
                 _build_skillbook_files(def)
         return
-    print("[XP Skills] Skill-book cache miss — rebuilding 9 books from source")
+    print("[XP Skills] Skill-book cache miss - rebuilding 9 books from source")
     for def in SKILLBOOK_DEFS:
         _build_skillbook_files(def)
     cache.set_value("cache", "signature", sig)
@@ -461,7 +460,7 @@ func _load_skillbook_png_at(rel_paths: Array, file_key: String = "", kind: Strin
         var tex := _read_png_as_texture(path)
         if tex != null:
             return tex
-    # Case-insensitive flat-layout fallback — user-supplied art sometimes has
+    # Case-insensitive flat-layout fallback: user-supplied art sometimes has
     # inconsistent capitalisation (e.g. "arctic icon.png" vs catalog "Arctic").
     if file_key != "" and kind != "":
         var hit := _case_insensitive_find(file_key, kind)
@@ -549,11 +548,11 @@ func _ensure_skillbook_mesh():
         return
     var obj_path: String = "res://Items/Books/Files/MS_Book.obj"
     if !ResourceLoader.exists(obj_path):
-        push_warning("[XP Skills] Vanilla book mesh not found at " + obj_path + " — skill books will fall back to BoxMesh")
+        push_warning("[XP Skills] Vanilla book mesh not found at " + obj_path + " - skill books will fall back to BoxMesh")
         return
     var mesh = ResourceLoader.load(obj_path)
     if mesh == null:
-        push_warning("[XP Skills] Failed to load " + obj_path + " — skill books will fall back to BoxMesh")
+        push_warning("[XP Skills] Failed to load " + obj_path + " - skill books will fall back to BoxMesh")
         return
     ResourceSaver.save(mesh, SKILLBOOK_MESH_PATH, ResourceSaver.FLAG_COMPRESS)
 
@@ -617,7 +616,7 @@ func _build_skillbook_pickup_tscn(book_file: String, tint: Color, cover_tex_path
 func _apply_skillbook_loot_injection():
     var lt = load("res://Loot/LT_Master.tres")
     if !lt:
-        push_warning("[XP Skills] Could not load LT_Master — skill books will not spawn as loot.")
+        push_warning("[XP Skills] Could not load LT_Master - skill books will not spawn as loot.")
         return
     var owned: Dictionary = {}
     for book_file in _skillbook_catalog.keys():
@@ -684,7 +683,7 @@ func _migrate_marker_file():
         var marker = Resource.new()
         ResourceSaver.save(marker, "user://XPSkillsMarker.tres")
 
-# Per-profile XP storage — Patty stores .tres in user://profiles/<name>/,
+# Per-profile XP storage: Patty stores .tres in user://profiles/<name>/,
 # but .cfg files are shared. Key by profile for per-profile XP state.
 func _get_active_profile() -> String:
     if !FileAccess.file_exists("user://profiles/active_profile.cfg"):
@@ -730,7 +729,7 @@ func _process(delta):
                 DirAccess.remove_absolute(ProjectSettings.globalize_path(pp))
             if !_skillbook_catalog.is_empty():
                 _ensure_skillbook_files()
-            print("[XP Skills] New game detected — XP and prestige reset")
+            print("[XP Skills] New game detected - XP and prestige reset")
         _ensure_marker()
         _sync_trader_baselines_from_save()
     if !_prev_menu and gameData.menu:
@@ -780,7 +779,7 @@ func is_player_kill() -> bool:
         return true
     if gameData.isFiring:
         return true
-    # Semi-auto fire window — button may be released before death is detected
+    # Semi-auto fire window: button may be released before death is detected
     if _last_fire_time > 0 and (Time.get_ticks_msec() - _last_fire_time) <= FIRE_WINDOW_MS:
         return true
     if last_grenade_time > 0 and (Time.get_ticks_msec() - last_grenade_time) <= GRENADE_WINDOW_MS:
@@ -838,7 +837,7 @@ func is_skill_enabled(index: int) -> bool:
         return false
     return cfg_skill_enabled.get(skill_ids[index], true)
 
-# Kill XP — poll tracked AI nodes for death
+# Kill XP: poll tracked AI nodes for death
 func _track_kills():
     var now = Time.get_ticks_msec()
     var still_alive: Array = []
@@ -1097,7 +1096,7 @@ func _reset_session_state():
     _damage_node = null
     _sb_last_scene_name = ""
 
-# Composure — reduce camera shake on hits
+# Composure: reduce camera shake on hits
 func _physics_process(_delta):
     if gameData.menu or gameData.shelter:
         return
@@ -1234,8 +1233,6 @@ func _load_prestige():
         for key in cfg.get_section_keys("prestige"):
             prestige_counts[key] = int(cfg.get_value("prestige", key, 0))
 
-# --- MCM Integration ---
-
 func _try_load_mcm():
     if ResourceLoader.exists("res://ModConfigurationMenu/Scripts/Doink Oink/MCM_Helpers.tres"):
         return load("res://ModConfigurationMenu/Scripts/Doink Oink/MCM_Helpers.tres")
@@ -1340,7 +1337,7 @@ func _register_mcm():
     })
     _config.set_value("Float", "cfg_regen_per_level", {
         "name" = "Regen HP/s per Level",
-        "tooltip" = "Passive HP regen per Regeneration skill level. Granular (0.01 steps) so you can tune it to taste. Default 0.02 means fully maxed Regen (skill 5) = 0.10 HP/s — about 17 minutes to heal from 0 to 100. Set to 0 to disable regen entirely.",
+        "tooltip" = "HP/s regen per Regeneration level. Default 0.02 = 0.10 HP/s at max (~17 min from 0 to 100). 0 disables",
         "default" = 0.02, "value" = 0.02,
         "minRange" = 0.0, "maxRange" = 2.0, "step" = 0.01,
         "menu_pos" = 25
@@ -1382,165 +1379,161 @@ func _register_mcm():
     })
     _config.set_value("Int", "cfg_shake_reduce", {
         "name" = "Composure Shake Reduce Per Level (%)",
-        "tooltip" = "Camera shake reduction when taking damage per Composure level (10 = 10% per level). Fully maxed at 5 levels reduces hit shake by 50%.",
+        "tooltip" = "Hit camera shake reduction per Composure level (10 = 10% per level)",
         "default" = 10, "value" = 10,
         "minRange" = 1, "maxRange" = 20,
         "menu_pos" = 30.5
     })
 
-    # ─── Prestige ───
     _config.set_value("Bool", "cfg_prestige_enabled", {
         "name" = "Enable Prestige",
-        "tooltip" = "When ON, a 'Prestige' button appears at the bottom of the Skills panel once every enabled skill is maxed. Clicking it lets you wipe all XP and skill levels in exchange for a permanent bonus to one chosen stat.",
+        "tooltip" = "Show Prestige button once all enabled skills are maxed; wipes XP/levels for a permanent stat bonus",
         "default" = true, "value" = true,
         "menu_pos" = 31
     })
     _config.set_value("Bool", "cfg_prestige_reset_on_death", {
         "name" = "Reset Prestige on Death",
-        "tooltip" = "Hardcore option: when ON, dying wipes your prestige ranks along with your XP and skill levels. Default OFF (prestige is permanent).",
+        "tooltip" = "Hardcore: death also wipes prestige ranks",
         "default" = false, "value" = false,
         "menu_pos" = 32
     })
     _config.set_value("Int", "cfg_prestige_hp", {
         "name" = "Prestige Max HP per Rank",
-        "tooltip" = "Permanent max HP gained per Vitality prestige rank.",
+        "tooltip" = "Max HP per Vitality prestige rank",
         "default" = 3, "value" = 3,
         "minRange" = 0, "maxRange" = 20,
         "menu_pos" = 33
     })
     _config.set_value("Int", "cfg_prestige_stamina", {
         "name" = "Prestige Stamina Reduce per Rank (%)",
-        "tooltip" = "Permanent stamina drain reduction per Endurance prestige rank.",
+        "tooltip" = "Stamina drain reduction per Endurance prestige rank",
         "default" = 3, "value" = 3,
         "minRange" = 0, "maxRange" = 10,
         "menu_pos" = 34
     })
     _config.set_value("Int", "cfg_prestige_carry", {
         "name" = "Prestige Carry Weight per Rank (kg)",
-        "tooltip" = "Permanent carry weight bonus per Pack Mule prestige rank.",
+        "tooltip" = "Carry weight per Pack Mule prestige rank",
         "default" = 1, "value" = 1,
         "minRange" = 0, "maxRange" = 10,
         "menu_pos" = 35
     })
     _config.set_value("Int", "cfg_prestige_hunger", {
         "name" = "Prestige Hunger Reduce per Rank (%)",
-        "tooltip" = "Permanent hunger drain reduction per Hunger Resist prestige rank.",
+        "tooltip" = "Hunger drain reduction per Hunger Resist prestige rank",
         "default" = 2, "value" = 2,
         "minRange" = 0, "maxRange" = 10,
         "menu_pos" = 36
     })
     _config.set_value("Int", "cfg_prestige_thirst", {
         "name" = "Prestige Thirst Reduce per Rank (%)",
-        "tooltip" = "Permanent thirst drain reduction per Thirst Resist prestige rank.",
+        "tooltip" = "Thirst drain reduction per Thirst Resist prestige rank",
         "default" = 2, "value" = 2,
         "minRange" = 0, "maxRange" = 10,
         "menu_pos" = 37
     })
     _config.set_value("Int", "cfg_prestige_mental", {
         "name" = "Prestige Mental Reduce per Rank (%)",
-        "tooltip" = "Permanent mental drain reduction per Iron Will prestige rank.",
+        "tooltip" = "Mental drain reduction per Iron Will prestige rank",
         "default" = 2, "value" = 2,
         "minRange" = 0, "maxRange" = 10,
         "menu_pos" = 38
     })
     _config.set_value("Float", "cfg_prestige_regen", {
         "name" = "Prestige Regen HP/s per Rank",
-        "tooltip" = "Permanent passive HP regen per Regeneration prestige rank. Stacks additively on top of the skill tree. Default 0.005 means one prestige rank ≈ 25% of a skill level at the default base regen rate, matching the other prestige stats.",
+        "tooltip" = "HP/s regen per Regeneration prestige rank, additive with skill tree. Default 0.005 ≈ 25% of a skill level",
         "default" = 0.005, "value" = 0.005,
         "minRange" = 0.0, "maxRange" = 0.1, "step" = 0.001,
         "menu_pos" = 39
     })
     _config.set_value("Int", "cfg_prestige_coldres", {
         "name" = "Prestige Cold Resist per Rank (%)",
-        "tooltip" = "Permanent cold drain reduction per Cold Resistance prestige rank.",
+        "tooltip" = "Cold drain reduction per Cold Resistance prestige rank",
         "default" = 2, "value" = 2,
         "minRange" = 0, "maxRange" = 10,
         "menu_pos" = 40
     })
     _config.set_value("Int", "cfg_prestige_stealth", {
         "name" = "Prestige Stealth per Rank (%)",
-        "tooltip" = "Permanent AI hearing reduction per Stealth prestige rank. Note: Stealth is currently a no-op since v2.0 dropped the AI.gd override.",
+        "tooltip" = "AI hearing reduction per Stealth prestige rank. No-op since v2.0 dropped the AI.gd override",
         "default" = 2, "value" = 2,
         "minRange" = 0, "maxRange" = 10,
         "menu_pos" = 41
     })
     _config.set_value("Int", "cfg_prestige_recoil", {
         "name" = "Prestige Recoil Reduce per Rank (%)",
-        "tooltip" = "Permanent weapon recoil reduction per Recoil Control prestige rank.",
+        "tooltip" = "Recoil reduction per Recoil Control prestige rank",
         "default" = 2, "value" = 2,
         "minRange" = 0, "maxRange" = 10,
         "menu_pos" = 42
     })
     _config.set_value("Int", "cfg_prestige_speed", {
         "name" = "Prestige Speed per Rank (%)",
-        "tooltip" = "Permanent movement speed bonus per Athleticism prestige rank.",
+        "tooltip" = "Speed bonus per Athleticism prestige rank",
         "default" = 1, "value" = 1,
         "minRange" = 0, "maxRange" = 5,
         "menu_pos" = 43
     })
     _config.set_value("Int", "cfg_prestige_scavenger", {
         "name" = "Prestige Scavenger per Rank (%)",
-        "tooltip" = "Permanent extra loot chance per Scavenger prestige rank.",
+        "tooltip" = "Extra loot chance per Scavenger prestige rank",
         "default" = 2, "value" = 2,
         "minRange" = 0, "maxRange" = 10,
         "menu_pos" = 44
     })
     _config.set_value("Int", "cfg_prestige_composure", {
         "name" = "Prestige Composure per Rank (%)",
-        "tooltip" = "Permanent camera shake reduction per Composure prestige rank.",
+        "tooltip" = "Camera shake reduction per Composure prestige rank",
         "default" = 2, "value" = 2,
         "minRange" = 0, "maxRange" = 10,
         "menu_pos" = 44.5
     })
     _config.set_value("Int", "cfg_prestige_cap", {
         "name" = "Prestige Rank Cap (non-Vitality)",
-        "tooltip" = "Maximum prestige ranks any non-Vitality skill can accumulate. Vitality (Max HP) is always uncapped.",
+        "tooltip" = "Max prestige ranks for non-Vitality skills; Vitality is uncapped",
         "default" = 10, "value" = 10,
         "minRange" = 1, "maxRange" = 50,
         "menu_pos" = 45
     })
 
-    # ─── Skill Books ───
     _config.set_value("Bool", "cfg_skillbooks_enabled", {
         "name" = "Enable Skill Books",
-        "tooltip" = "When ON, 9 dedicated skill books spawn as Rare civilian loot and can be read to grant XP into specific skills. Each book trains one skill (Fitness, Athletics, Meditation, Stealth, Scavenging) or two at 60% total split 50/50 (Medical: Vitality+Regen; Survival: Hunger+Thirst; Combat: Recoil+Composure; Arctic: Cold+Endurance). Toggling off removes them from new-loot rolls and disables the Read action; existing world/inventory books stay but become inert until re-enabled.",
+        "tooltip" = "9 skill books as Rare civilian loot. Solo: Fitness, Athletics, Meditation, Stealth, Scavenging. Dual (60% split 50/50): Medical, Survival, Combat, Arctic. Off: no new spawns, existing books inert",
         "default" = true, "value" = true,
         "menu_pos" = 46
     })
     _config.set_value("Int", "cfg_skillbook_base_xp", {
         "name" = "Skill Book Base XP",
-        "tooltip" = "XP a solo-skill book (Fitness, Athletics, Meditation, Stealth, Scavenging) grants when read. Dual-skill books (Medical, Survival, Combat, Arctic) use the multiplier below and split the result evenly between their two skills.",
+        "tooltip" = "XP per solo-skill book; dual books use the multiplier below",
         "default" = 200, "value" = 200,
         "minRange" = 10, "maxRange" = 2000,
         "menu_pos" = 47
     })
     _config.set_value("Int", "cfg_skillbook_dual_multiplier", {
         "name" = "Dual-Skill Book Multiplier (%)",
-        "tooltip" = "Dual-skill books grant this percentage of a solo book's base XP, split 50/50 between their two skills. 60 (default) means a dual book grants 0.6 × base, giving each skill 0.3 × base.",
+        "tooltip" = "Dual book XP as % of base, split 50/50. 60 = 0.6 × base, 0.3 × per skill",
         "default" = 60, "value" = 60,
         "minRange" = 0, "maxRange" = 200,
         "menu_pos" = 48
     })
 
-    # ─── Scavenger SFX ───
     _config.set_value("Bool", "cfg_scavenger_sfx_enabled", {
         "name" = "Scavenger SFX Enabled",
-        "tooltip" = "Play a sound cue when the Scavenger skill procs bonus loot from a container. Turn off for silent scavenging.",
+        "tooltip" = "Sound cue when Scavenger procs bonus loot",
         "default" = true, "value" = true,
         "menu_pos" = 49
     })
     _config.set_value("Int", "cfg_scavenger_sfx_volume", {
         "name" = "Scavenger SFX Volume (%)",
-        "tooltip" = "Playback volume of the Scavenger bonus-loot sound cue. 100 = unchanged, 0 = silent (same as disabling).",
+        "tooltip" = "Scavenger cue volume (100 = unchanged, 0 = silent)",
         "default" = 80, "value" = 80,
         "minRange" = 0, "maxRange" = 100,
         "menu_pos" = 50
     })
 
-    # ─── Scavenger Tooltip ───
     _config.set_value("Int", "cfg_scavenger_tt_xoffset", {
         "name" = "Scavenger Tooltip X Offset",
-        "tooltip" = "Horizontal offset for the scavenger tooltip from the top centre of the screen.",
+        "tooltip" = "Scavenger tooltip X offset from top centre",
         "default" = 0, "value" = 0,
         "minRange" = -1000, "maxRange" = 1000,
         "menu_pos" = 51
@@ -1548,7 +1541,7 @@ func _register_mcm():
 
     _config.set_value("Int", "cfg_scavenger_tt_yoffset", {
         "name" = "Scavenger Tooltip Y Offset",
-        "tooltip" = "Vertical offset for the scavenger tooltip from the top of the screen.",
+        "tooltip" = "Scavenger tooltip Y offset from top of screen",
         "default" = 60, "value" = 60,
         "minRange" = 0, "maxRange" = 2000,
         "menu_pos" = 52
@@ -1657,7 +1650,7 @@ func _apply_mcm_config(config: ConfigFile):
     for _i in range(skill_ids.size() - 1):
         cfg_prestige_caps.append(shared_cap)
 
-# --- Fallback config (used when MCM is not installed) ---
+# Fallback config, used when MCM is not installed
 
 func LoadConfig():
     var cfg = ConfigFile.new()
@@ -1877,7 +1870,7 @@ func award_skillbook_xp(item_data):
     if not _skillbook_catalog.has(file_name):
         return
     var listed: Array = _skillbook_catalog[file_name].skills
-    # Same XP budget regardless of how many slots end up disabled — a dual
+    # Same XP budget regardless of how many slots end up disabled: a dual
     # book always grants `base × dual_multiplier`, a solo book always grants
     # `base`. Disabled slots redirect their share to the general XP pool
     # instead of being dropped, so reading a book is never a total waste.
@@ -1918,7 +1911,7 @@ func _try_level_up_from_pool(sid: String):
         pool -= cost
         current_level += 1
         _set_level_by_index(idx, current_level)
-    # Drop stranded XP once the skill is maxed — otherwise the pool grows
+    # Drop stranded XP once the skill is maxed; otherwise the pool grows
     # forever and survives into the next run via SaveXP.
     if current_level >= max_level:
         pool = 0.0
@@ -1943,7 +1936,7 @@ func _set_level_by_index(idx: int, value: int):
 
 func _character_initial_spawn() -> bool:
     # Loader.NewGame() sets initialSpawn = true; Loader.SaveCharacter()
-    # clears it on the first save, so CACHE_MODE_IGNORE is required —
+    # clears it on the first save, so CACHE_MODE_IGNORE is required;
     # a cached copy would return stale true after the first save.
     if !FileAccess.file_exists("user://Character.tres"):
         return false
