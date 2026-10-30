@@ -105,11 +105,7 @@ var cfg_speed_bonus: float = 0.04
 var cfg_scavenger_chance: float = 0.05
 var cfg_shake_reduce: float = 0.10
 
-# Skill Books — 9 dedicated items built at runtime from SKILLBOOK_DEFS.
-# Reuses the vanilla MS_Book mesh with a per-book tinted material so we
-# don't ship .obj files; inventory icons are generated procedurally as
-# placeholders (real art can be dropped in mods/XPSkillsSystem/Books/
-# <file>_icon.png later without code changes).
+# Skill Books — 9 items built at runtime from SKILLBOOK_DEFS.
 var cfg_skillbooks_enabled: bool = true
 var cfg_skillbook_base_xp: int = 200
 var cfg_skillbook_dual_multiplier: float = 0.6
@@ -134,15 +130,10 @@ const SKILLBOOK_DEFS: Array = [
 # Needed for fast lookup on Consume and for shelter respawn.
 var _skillbook_catalog: Dictionary = {}  # file -> {skills: Array, item_data: ItemData, pickup: PackedScene}
 
-# Shelter persistence — base LoadShelter won't know our items exist, so we
-# re-instantiate any skill-book pickups saved in the shelter .tres ourselves.
+# Shelter persistence — re-instantiate skill-book pickups saved in shelter .tres
 var _sb_last_scene_name: String = ""
 
-# Path to the runtime-parsed book mesh. Referencing res://...MS_Book.obj as
-# a path-only ext_resource has proven fragile for community users — Godot
-# resolves via UID first and path fallback second, and the fallback can
-# fail in some mod-load configurations. We parse the vanilla .obj ourselves
-# into a stable user:// ArrayMesh to eliminate that failure mode.
+# Runtime-parsed book mesh to avoid UID-resolution issues in some mod configs.
 const SKILLBOOK_MESH_PATH: String = "user://XPSkillbook_Mesh.res"
 
 var skill_xp_pool: Dictionary = {}
@@ -264,18 +255,11 @@ func _skillbook_file(def: Dictionary) -> String:
     return SKILLBOOK_PREFIX + str(def.file)
 
 const SKILLBOOK_CACHE_PATH: String = "user://XPSkillsBookCache.cfg"
-# Bump whenever the on-disk .tres/.tscn layout changes so existing caches
-# get invalidated and rebuilt. v2 = icon referenced via ext_resource
-# instead of inline PackedByteArray. v3 = item.generalist flag set so
-# books appear in the Generalist trader's supply. v4 = pickup references
-# the runtime-parsed user://XPSkillbook_Mesh.res instead of the vanilla
-# res://Items/Books/Files/MS_Book.obj (UID-resolution flakiness fix).
+# Bump when on-disk .tres/.tscn layout changes for cache invalidation.
+# v4 = runtime-parsed mesh; v5 = icon via ext_resource.
 const SKILLBOOK_CACHE_VERSION: int = 5
 
 func _init_skillbook_items():
-    # Fast path: if the source PNGs haven't changed since the last rebuild
-    # and all generated .tres/.tscn are still on disk, just load them into
-    # memory. Skips ~18 PNG decodes + ~27 disk writes per boot.
     var sig: String = _skillbook_source_signature()
     var cache := ConfigFile.new()
     cache.load(SKILLBOOK_CACHE_PATH)
@@ -301,11 +285,6 @@ func _init_skillbook_items():
     cache.save(SKILLBOOK_CACHE_PATH)
 
 func _load_cached_skillbook(def: Dictionary) -> bool:
-    # Preload both ItemData AND the pickup scene (with its cover texture)
-    # at boot. Lazy-loading was experimented with and reverted — community
-    # crash reports pointed at on-demand resolution during container-open
-    # flows. Costs ~1MB per book of decoded cover texture but keeps the
-    # resource cache fully warm before any gameplay interaction.
     var book_file: String = _skillbook_file(def)
     var item_path: String = "user://" + book_file + ".tres"
     var pickup_path: String = "user://" + book_file + ".tscn"
@@ -327,8 +306,6 @@ func _get_skillbook_pickup(book_file: String) -> PackedScene:
     if !_skillbook_catalog.has(book_file):
         return null
     var entry = _skillbook_catalog[book_file]
-    # Preloaded at boot — this is just a catalog lookup now. Fall back to
-    # a disk read only if the entry was somehow cleared mid-session.
     if entry.get("pickup") != null:
         return entry.pickup
     var path: String = str(entry.get("pickup_path", ""))
@@ -370,26 +347,16 @@ func _skillbook_source_signature() -> String:
     return "|".join(parts)
 
 func _build_skillbook_files(def: Dictionary):
-    # Idempotent: creates on-disk .tres/.tscn files for this book and
-    # links their in-memory cache entries. If the book is already in
-    # _skillbook_catalog, we rebuild disk files (in case FormatSave wiped
-    # them on a New Game) but keep the existing ItemData instance so
-    # LT_Master references stay valid across the reset.
     var book_file: String = _skillbook_file(def)
     var icon_res_path: String = "user://" + book_file + "_Icon.tres"
     var tetris_path: String = "user://" + book_file + "_Tetris.tscn"
     var item_path: String = "user://" + book_file + ".tres"
     var pickup_path: String = "user://" + book_file + ".tscn"
 
-    # Prefer real art if present, otherwise fall back to the placeholder.
-    # Drop a PNG at mods/XPSkillsSystem/Books/<File>/icon.png to take over.
     var icon: ImageTexture = _load_skillbook_icon_override(str(def.file))
     if icon == null:
         icon = _build_skillbook_icon(def.color)
     ResourceSaver.save(icon, icon_res_path)
-    # Without this the ItemData serializer embeds the full icon bitmap
-    # inline (~500KB per book). take_over_path binds the in-memory instance
-    # to its saved file, so ItemData writes a cheap ext_resource reference.
     icon.take_over_path(icon_res_path)
 
     var tetris_src: String = _build_skillbook_tetris_tscn(book_file, icon_res_path)
@@ -425,10 +392,6 @@ func _build_skillbook_files(def: Dictionary):
     ResourceSaver.save(item, item_path)
     ResourceLoader.load(item_path, "", ResourceLoader.CACHE_MODE_REPLACE)
 
-    # Optional real cover texture — if the modder ships cover.png, save it
-    # as a .tres so the pickup scene can pull it in as an ext_resource.
-    # No CACHE_MODE_REPLACE here: the pickup .tscn is lazy-loaded and will
-    # resolve this resource from disk on first use.
     var cover_tex_path: String = ""
     var cover_tex: ImageTexture = _load_skillbook_cover_override(str(def.file))
     if cover_tex != null:
@@ -440,10 +403,6 @@ func _build_skillbook_files(def: Dictionary):
     if pf:
         pf.store_string(pickup_src)
         pf.close()
-    # Eagerly load the pickup scene so its cover texture lives in the
-    # resource cache before any gameplay code touches it. Reverted the
-    # lazy-load experiment — community crash reports pointed at on-demand
-    # resolution during container-open flows.
     var pickup_scene: PackedScene = ResourceLoader.load(pickup_path, "", ResourceLoader.CACHE_MODE_REPLACE)
     _skillbook_catalog[book_file] = {
         "skills": def.skills.duplicate(),
@@ -453,9 +412,6 @@ func _build_skillbook_files(def: Dictionary):
     }
 
 func _ensure_skillbook_files():
-    # Called after FormatSave on New Game. Rewrites the disk files and
-    # refreshes cache without touching the in-memory ItemData references
-    # that LT_Master.items already points to.
     for def in SKILLBOOK_DEFS:
         _build_skillbook_files(def)
 
@@ -473,9 +429,6 @@ func _skillbook_mod_file(rel_path: String) -> String:
     return ""
 
 func _load_skillbook_icon_override(file_key: String) -> ImageTexture:
-    # The tetris Sprite2D renders at 0.5× scale, so the texture needs to be
-    # 128×256 to fit a 1×2 inventory slot cleanly. Any source resolution gets
-    # resampled down to that target.
     var tex := _load_skillbook_png_at([
         "Books/" + file_key + "/icon.png",
         "Books/" + file_key + " icon.png",
@@ -525,9 +478,6 @@ func _read_png_as_texture(path: String) -> ImageTexture:
     return ImageTexture.create_from_image(img)
 
 func _case_insensitive_find(file_key: String, kind: String) -> String:
-    # Scan Books/ for "<key> <kind>.png" ignoring case. Tries both the
-    # packaged (res://) and disk-based mod dirs since FileAccess.file_exists
-    # can't detect directories, only files.
     var needles: Array = [file_key.to_lower() + " " + kind + ".png"]
     if kind == "cover":
         needles.append(file_key.to_lower() + ".png")
@@ -553,8 +503,6 @@ func _case_insensitive_find(file_key: String, kind: String) -> String:
     return ""
 
 func _build_skillbook_icon(tint: Color) -> ImageTexture:
-    # 128x256 placeholder — matches vanilla Icon_Book_* dimensions so real
-    # art can drop in at the same resolution without resampling.
     var img := Image.create(128, 256, false, Image.FORMAT_RGBA8)
     img.fill(tint)
     var edge := tint.lightened(0.15)
@@ -594,11 +542,6 @@ func _build_skillbook_tetris_tscn(book_file: String, icon_path: String) -> Strin
     return "\n".join(lines)
 
 func _ensure_skillbook_mesh():
-    # Load the vanilla book mesh via the Godot resource loader (which
-    # reads the IMPORTED ArrayMesh — the raw .obj source is stripped
-    # from the PCK in packaged builds, so FileAccess can't read it as
-    # text) and save it to a stable user:// path that pickup .tscn
-    # files can reference without UID resolution.
     if FileAccess.file_exists(SKILLBOOK_MESH_PATH):
         return
     var obj_path: String = "res://Items/Books/Files/MS_Book.obj"
@@ -612,11 +555,6 @@ func _ensure_skillbook_mesh():
     ResourceSaver.save(mesh, SKILLBOOK_MESH_PATH, ResourceSaver.FLAG_COMPRESS)
 
 func _build_skillbook_pickup_tscn(book_file: String, tint: Color, cover_tex_path: String = "") -> String:
-    # Reuses the vanilla book mesh saved at SKILLBOOK_MESH_PATH. If that
-    # mesh file isn't present (ResourceLoader couldn't load the vanilla
-    # .obj for some reason) we fall back to a simple BoxMesh sub-resource
-    # so the scene still loads cleanly — an ext_resource to a missing
-    # file would fail the entire .tscn parse.
     var has_mesh: bool = FileAccess.file_exists(SKILLBOOK_MESH_PATH)
     var lines := PackedStringArray()
     lines.append('[gd_scene format=3]')
@@ -674,8 +612,6 @@ func _build_skillbook_pickup_tscn(book_file: String, tint: Color, cover_tex_path
     return "\n".join(lines)
 
 func _apply_skillbook_loot_injection():
-    # Runs after _init_skillbook_items, so every SKILLBOOK_PREFIX ItemData
-    # is already created. Append-only; we never remove items we don't own.
     var lt = load("res://Loot/LT_Master.tres")
     if !lt:
         push_warning("[XP Skills] Could not load LT_Master — skill books will not spawn as loot.")
@@ -695,15 +631,10 @@ func _apply_skillbook_loot_injection():
         print("[XP Skills] Injected %d skill book(s) into LT_Master (now %d total items)" % [owned.size(), lt.items.size()])
 
 func _respawn_skillbooks_deferred(shelter_name: String):
-    # Base LoadShelter awaits 0.1s internally. Wait a touch longer so every
-    # vanilla item has been spawned before we add ours on top.
     await get_tree().create_timer(0.3).timeout
     _respawn_skillbooks_in_shelter(shelter_name)
 
 func _respawn_skillbooks_in_shelter(shelter_name: String):
-    # Base LoadShelter calls Database.get(item.file) and skips when it's
-    # null, which it will be for every SKILLBOOK_PREFIX item. Without this
-    # step, books dropped in the Cabin or Tent vanish on shelter reload.
     var path: String = "user://" + shelter_name + ".tres"
     if !FileAccess.file_exists(path):
         return
@@ -750,12 +681,8 @@ func _migrate_marker_file():
         var marker = Resource.new()
         ResourceSaver.save(marker, "user://XPSkillsMarker.tres")
 
-# --- Patty's Profiles compat ---
-# Patty stores per-profile copies of .tres files in user://profiles/<name>/,
-# but .cfg files are shared across profiles. We key XPData.cfg by profile so
-# each profile gets its own XP/skill state. With no Patty installed, falls
-# back to user://XPData.cfg.
-
+# Per-profile XP storage — Patty stores .tres in user://profiles/<name>/,
+# but .cfg files are shared. Key by profile for per-profile XP state.
 func _get_active_profile() -> String:
     if !FileAccess.file_exists("user://profiles/active_profile.cfg"):
         return ""
@@ -783,18 +710,9 @@ func _copy_file_bytes(src: String, dst: String):
     f_out.close()
 
 func _process(delta):
-    # Detect menu→game transition to check for new game
     if _prev_menu and !gameData.menu:
-        # Patty Profiles compat: if the active profile changed while the
-        # player was in the menu, reload state from the new profile's file.
-        # Zero cost without Patty — the path never changes so this is a
-        # single string compare.
         if _get_xp_data_path() != _last_xp_path:
             LoadXP()
-        # Two independent new-game signals. Marker alone is unreliable —
-        # any SaveXP between FormatSave and this check recreates it. The
-        # initialSpawn flag on Character.tres covers that race because only
-        # Loader.SaveCharacter() clears it.
         var is_new_game: bool = false
         if !gameData.tutorial:
             if !FileAccess.file_exists("user://XPSkillsMarker.tres"):
@@ -803,39 +721,23 @@ func _process(delta):
                 is_new_game = true
         if is_new_game:
             ResetXP()
-            # New game wipes prestige too. ResetXP alone only wipes prestige
-            # when the hardcore "reset on death" toggle is on, because it
-            # also runs on regular death. New game is unambiguous so we
-            # always clear prestige here regardless of that toggle.
             prestige_counts.clear()
             var pp = _get_prestige_path()
             if FileAccess.file_exists(pp):
                 DirAccess.remove_absolute(ProjectSettings.globalize_path(pp))
-            # FormatSave wiped our XPSkillbook_*.tres too — rewrite them so
-            # cached pickup scenes can still resolve their ext_resources.
             if !_skillbook_catalog.is_empty():
                 _ensure_skillbook_files()
             print("[XP Skills] New game detected — XP and prestige reset")
         _ensure_marker()
-        # Seed trader baselines from the authoritative save file. Must happen
-        # after LoadXP (so profile-switched counts are respected) and after
-        # ResetXP (so new games start with zero baselines rather than stale
-        # ones). No-ops for traders already present in cfg_trader_task_counts.
         _sync_trader_baselines_from_save()
-    # Detect game→menu transition: drop all per-session caches so a new run
-    # starts with a clean slate (fixes stale node refs and container leak).
     if !_prev_menu and gameData.menu:
         _reset_session_state()
     _prev_menu = gameData.menu
 
-    # Keep gameData fields in sync so base game code uses our levels
-    # even if another mod stomped our Character.gd override
     if !gameData.menu:
         _sync_to_gamedata()
 
-    # Detect scene change to respawn any skill books saved in shelters.
-    # Base LoadShelter skips them (Database.get returns null for our
-    # custom items) so we re-instantiate on the frame after load.
+    # Respawn skill books when scene changes
     var cur_scene = get_tree().current_scene
     if cur_scene and "mapName" in cur_scene:
         var mn: String = str(cur_scene.mapName)
@@ -845,15 +747,13 @@ func _process(delta):
     elif cur_scene:
         _sb_last_scene_name = ""
 
-    # Track grenade throws for kill attribution
+    # Track grenade throws and fire input for kill attribution
     var g1 = gameData.grenade1 if "grenade1" in gameData else false
     var g2 = gameData.grenade2 if "grenade2" in gameData else false
     if (_prev_grenade1 and !g1) or (_prev_grenade2 and !g2):
         last_grenade_time = Time.get_ticks_msec()
     _prev_grenade1 = g1
     _prev_grenade2 = g2
-
-    # Track fire input for kill attribution (semi-auto fire window)
     if Input.is_action_pressed("fire") or ("isFiring" in gameData and gameData.isFiring):
         _last_fire_time = Time.get_ticks_msec()
 
@@ -864,27 +764,13 @@ func _process(delta):
     if gameData.menu or gameData.shelter:
         return
 
-    # --- Compat XP tracking (replaces script overrides) ---
-
-    # Kill XP — poll tracked AI nodes for death
     _track_kills()
-
-    # Container XP — detect container open via interface state
     if _interface_just_opened and !gameData.isTrading:
         _check_container_xp.call_deferred()
-
-    # Trade XP — connect to Accept button when trading
     if gameData.isTrading and !_trade_connected:
         _connect_trade_button()
-
-    # Task XP — monitor trader task completions
     _track_tasks()
-
-    # Speed bonus — set Controller walk/sprint speeds
     _apply_speed_bonus()
-
-    # Cold resistance is applied inside Character.gd Temperature() override.
-    # No Main.gd compensation needed — running both was double-applying it.
 
 func is_player_kill() -> bool:
     if Input.is_action_pressed("fire"):
@@ -911,29 +797,21 @@ func overrideScript(path: String):
     script.take_over_path(parent.resource_path)
 
 func _on_node_added(node: Node):
-    # Recoil reduction on weapon equip
     if node is Node3D and node.name == "Recoil" and node.has_method("ApplyRecoil"):
         _apply_recoil_reduction.call_deferred(node)
         return
 
-    # Composure — cache the camera hit-shake node so _physics_process can
-    # scale its rotation without needing a Damage.gd override.
     if node is Node3D:
         var s: Script = node.get_script()
         if s and s.resource_path == "res://Scripts/Damage.gd":
             _damage_node = node
             return
 
-    # AI tracking for kill XP — broadened detection for modded AI classes
-    # that may not declare `boss` (e.g. custom factions).
     if "dead" in node and node.has_method("Death"):
         if node not in _tracked_ai:
             _tracked_ai.append(node)
         return
 
-    # Trader tracking for task XP. We don't capture a baseline here because
-    # tasksCompleted isn't yet populated — LoadTrader() fills it on interaction.
-    # The real baseline lives in cfg_trader_task_counts (persisted in XPData.cfg).
     if "tasksCompleted" in node and "traderData" in node:
         _tracked_traders.append(weakref(node))
         return
@@ -957,10 +835,8 @@ func is_skill_enabled(index: int) -> bool:
         return false
     return cfg_skill_enabled.get(skill_ids[index], true)
 
-# --- Compat: Kill XP (replaces AI.gd override) ---
-
+# Kill XP — poll tracked AI nodes for death
 func _track_kills():
-    # Step 1: drain freshly-dead AI into the pending bucket, keep the living.
     var now = Time.get_ticks_msec()
     var still_alive: Array = []
     for ai in _tracked_ai:
@@ -972,11 +848,6 @@ func _track_kills():
             still_alive.append(ai)
     _tracked_ai = still_alive
 
-    # Step 2: re-check is_player_kill() every frame within a grace window,
-    # so a single-frame miss (physics vs process divergence, HellMAI's heavier
-    # death pipeline, etc.) doesn't permanently lose the kill.
-    if _pending_kills.is_empty():
-        return
     var still_pending: Array = []
     for pk in _pending_kills:
         var ai = pk.ref
@@ -992,8 +863,7 @@ func _track_kills():
             still_pending.append(pk)
     _pending_kills = still_pending
 
-# --- Compat: Container/Search XP (replaces LootContainer.gd override) ---
-
+# Container/Search XP
 func _check_container_xp():
     var ui = get_tree().current_scene.get_node_or_null("/root/Map/Core/UI")
     if !ui:
@@ -1005,17 +875,12 @@ func _check_container_xp():
     if cid in _awarded_containers:
         return
     _awarded_containers[cid] = true
-    # Accumulate fractional rewards so values like 0.3 actually work:
-    # search ~4 containers = +1 XP. Whole-number configs award instantly.
-    _container_xp_fraction += cfg_xp_container
     var whole: int = int(floor(_container_xp_fraction))
     if whole > 0:
         xp += whole
         xpTotal += whole
         _container_xp_fraction -= float(whole)
     SaveXP()
-    # Scavenger skill — bonus loot from containers. Prestige grants a
-    # permanent baseline chance even at skill level 0.
     if get_level(11) > 0 or prestige_scavenger_bonus() > 0.0:
         get_tree().create_timer(0.1).timeout.connect(_try_scavenge.bind(iface, ui))
 
@@ -1109,8 +974,6 @@ func _show_scavenge_notify(ui_manager, item_name: String):
         if _sfx_search:
             var player = AudioStreamPlayer.new()
             player.stream = _sfx_search
-            # Linear 0-100 → dB. 100 = 0 dB (unchanged), 0 = silent (-60 dB
-            # floor). linear_to_db maps 1.0 → 0 dB, 0.01 → ~-40 dB.
             var linear: float = clamp(cfg_scavenger_sfx_volume / 100.0, 0.0, 1.0)
             player.volume_db = linear_to_db(linear) if linear > 0.001 else -60.0
             get_tree().root.add_child(player)
@@ -1129,8 +992,7 @@ func _show_scavenge_notify(ui_manager, item_name: String):
     tween.tween_property(label, "modulate:a", 0.0, 1.5).set_delay(1.0)
     tween.tween_callback(label.queue_free)
 
-# --- Compat: Trade XP (replaces Interface.gd trade hook) ---
-
+# Trade XP
 func _connect_trade_button():
     var ui = get_tree().current_scene.get_node_or_null("/root/Map/Core/UI")
     if !ui:
@@ -1150,8 +1012,7 @@ func _on_trade_accept():
     xpTotal += cfg_xp_trade
     SaveXP()
 
-# --- Compat: Task XP (replaces Trader.gd override) ---
-
+# Task XP
 func _track_tasks():
     var still_valid: Array = []
     var awarded := false
@@ -1160,16 +1021,12 @@ func _track_tasks():
         if !trader or !is_instance_valid(trader):
             continue
         still_valid.append(wref)
-        # traderData may load slightly after the node is added; skip until ready
         if !("traderData" in trader) or trader.traderData == null:
             continue
         var key: String = str(trader.traderData.name)
         if key.is_empty():
             continue
         var current_count: int = trader.tasksCompleted.size()
-        # First sight: seed the baseline. _sync_trader_baselines_from_save() has
-        # already run on menu→game to seed historical counts from Traders.tres,
-        # so this only fires for truly new traders or new games.
         if not cfg_trader_task_counts.has(key):
             cfg_trader_task_counts[key] = current_count
             continue
@@ -1180,28 +1037,16 @@ func _track_tasks():
             xpTotal += cfg_xp_task * completed
             cfg_trader_task_counts[key] = current_count
             awarded = true
-        # Never ratchet the baseline DOWN here. On zone reload the trader is
-        # re-instantiated with an empty tasksCompleted until LoadTrader() runs,
-        # which would otherwise look like "save wiped" and re-award history
-        # on the next repopulate. New games are handled by ResetXP().
     _tracked_traders = still_valid
     if awarded:
         SaveXP()
 
 func _sync_trader_baselines_from_save():
-    # Read user://Traders.tres (the base game's authoritative task list) and
-    # seed cfg_trader_task_counts for any trader not already tracked. Fixes
-    # the first-install scenario where a player has historical trader progress
-    # that we'd otherwise miscount once LoadTrader() repopulates tasksCompleted.
-    # Uses has() so fresher in-session values are never overwritten.
     if !FileAccess.file_exists("user://Traders.tres"):
         return
     var save = load("user://Traders.tres")
     if save == null:
         return
-    # Duck-type instead of `is TraderSave` — the class_name registry may not
-    # be ready yet, and any future save format adding new trader sections
-    # shouldn't break us either.
     for trader_name in ["Generalist", "Doctor", "Gunsmith", "Grandma"]:
         if cfg_trader_task_counts.has(trader_name):
             continue
@@ -1209,16 +1054,12 @@ func _sync_trader_baselines_from_save():
         if prop in save and save.get(prop) is Array:
             cfg_trader_task_counts[trader_name] = save.get(prop).size()
 
-# --- Compat: Speed bonus (replaces Controller.gd override) ---
-
+# Speed bonus
 func _apply_speed_bonus():
     var level = get_level(10)
     var prestige_bonus = prestige_speed_bonus()
     if level <= 0 and prestige_bonus <= 0.0:
         return
-    # Never touch the Controller mid-scene-load — is_instance_valid can return
-    # true during teardown, and writing to a half-freed node crashes. Users
-    # reported this as the athleticism zone-transition CTD.
     if "isTransitioning" in gameData and gameData.isTransitioning:
         return
     if "isCaching" in gameData and gameData.isCaching:
@@ -1228,7 +1069,6 @@ func _apply_speed_bonus():
         _controller_ref.sprintSpeed = _controller_base_sprint * bonus
         _controller_ref.walkSpeed = _controller_base_walk * bonus
         return
-    # Stale or first-contact — lazy re-lookup.
     _controller_ref = null
     var scene = get_tree().current_scene
     if !scene:
@@ -1236,18 +1076,12 @@ func _apply_speed_bonus():
     var ctrl = scene.get_node_or_null("/root/Map/Core/Controller")
     if ctrl and ctrl.is_inside_tree() and "sprintSpeed" in ctrl and "walkSpeed" in ctrl:
         _controller_ref = ctrl
-        # Capture the REAL base speeds before we modify them, so compatible mods
-        # that bump base speed (or the game applying injury/state penalties)
-        # stack correctly with ours instead of being stomped.
         _controller_base_walk = ctrl.walkSpeed
         _controller_base_sprint = ctrl.sprintSpeed
         ctrl.sprintSpeed = _controller_base_sprint * bonus
         ctrl.walkSpeed = _controller_base_walk * bonus
 
 func _reset_session_state():
-    # Drop all per-run caches. Called on entering the main menu so the next
-    # run starts clean — prevents stale Node refs across Map reloads and
-    # caps _awarded_containers growth.
     _awarded_containers.clear()
     _pending_kills.clear()
     _tracked_ai.clear()
@@ -1258,12 +1092,8 @@ func _reset_session_state():
     _damage_node = null
     _sb_last_scene_name = ""
 
-# --- Compat: Composure (reduces camera shake on hits) ---
-
+# Composure — reduce camera shake on hits
 func _physics_process(_delta):
-    # Scale down the rotation Damage.gd just wrote when the player has
-    # Composure skill or prestige ranks. We run after Damage.gd thanks to
-    # process_physics_priority, so rotation already holds this frame's value.
     if gameData.menu or gameData.shelter:
         return
     if not gameData.damage and not gameData.impact:
@@ -1296,8 +1126,7 @@ func get_level(index: int) -> int:
         12: return xpComposure
     return 0
 
-# ─── Prestige helpers ─────────────────────────────────────────
-
+# Prestige helpers
 func get_prestige_count(skill_index: int) -> int:
     if skill_index < 0 or skill_index >= skill_ids.size():
         return 0
@@ -1309,17 +1138,12 @@ func get_prestige_cap(skill_index: int) -> int:
     return int(cfg_prestige_caps[skill_index])
 
 func can_prestige_skill(skill_index: int) -> bool:
-    # A skill can receive more prestige ranks if its cap is unlimited (-1)
-    # or if its current rank count is below the cap.
     var cap = get_prestige_cap(skill_index)
     if cap < 0:
         return true
     return get_prestige_count(skill_index) < cap
 
 func is_prestige_available() -> bool:
-    # Unlocked when every ENABLED skill is at its max level, and at least
-    # one skill is enabled. Returns false if the prestige feature itself
-    # is disabled in MCM.
     if not cfg_prestige_enabled:
         return false
     var has_enabled := false
@@ -1331,16 +1155,12 @@ func is_prestige_available() -> bool:
     return has_enabled
 
 func do_prestige(skill_index: int) -> bool:
-    # Sanity checks — callers (UI) should already verify these, but be
-    # defensive since prestige is destructive.
     if not is_prestige_available():
         return false
     if skill_index < 0 or skill_index >= skill_ids.size():
         return false
     if not can_prestige_skill(skill_index):
         return false
-    # Wipe all XP and stored skill levels. _zero_xp_state clears the XP
-    # state but NOT prestige_counts, which is the whole point.
     _zero_xp_state()
     var sid: String = skill_ids[skill_index]
     prestige_counts[sid] = int(prestige_counts.get(sid, 0)) + 1
@@ -1348,10 +1168,6 @@ func do_prestige(skill_index: int) -> bool:
     _save_prestige()
     _sync_to_gamedata()
     return true
-
-# Per-skill additive prestige bonuses. Callers (Character.gd, Interface.gd,
-# and Main.gd's own compat polling) add these to the skill-tree bonus so
-# prestige is a permanent baseline that stacks on top of leveling.
 
 func prestige_hp_bonus() -> float:
     return get_prestige_count(0) * cfg_prestige_hp
@@ -1436,21 +1252,21 @@ func _register_mcm():
 
     _config.set_value("Float", "cfg_xp_container", {
         "name" = "Container Search XP",
-        "tooltip" = "XP earned per container (fractional values supported — e.g. 0.3 awards 1 XP per ~4 containers searched)",
+        "tooltip" = "XP per container searched",
         "default" = 1.0, "value" = 1.0,
         "minRange" = 0.0, "maxRange" = 5.0, "step" = 0.1,
         "menu_pos" = 13
     })
     _config.set_value("Int", "cfg_xp_kill", {
         "name" = "Enemy Kill XP",
-        "tooltip" = "XP earned per enemy kill",
+        "tooltip" = "XP per enemy kill",
         "default" = 25, "value" = 25,
         "minRange" = 0, "maxRange" = 200,
         "menu_pos" = 14
     })
     _config.set_value("Int", "cfg_xp_boss", {
         "name" = "Boss Kill XP",
-        "tooltip" = "XP earned per boss kill",
+        "tooltip" = "XP per boss kill",
         "default" = 100, "value" = 100,
         "minRange" = 0, "maxRange" = 500,
         "menu_pos" = 15
