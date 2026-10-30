@@ -521,7 +521,7 @@ func _update_prestige_ui(xp_mod):
     var available = xp_mod.is_prestige_available()
     _prestige_button.disabled = not available
     if available:
-        _prestige_status_label.text = "All enabled skills maxed. Pick a stat to prestige — all XP and skill levels will be wiped in exchange for a permanent bonus to that stat."
+        _prestige_status_label.text = "All enabled skills maxed. Pick a stat to prestige: all XP and skill levels will be wiped in exchange for a permanent bonus to that stat."
         _prestige_status_label.add_theme_color_override("font_color", Color(0.55, 1.0, 0.55))
     else:
         _prestige_status_label.text = "Max every enabled skill to unlock Prestige. Prestige grants a permanent stat bonus that survives death, in exchange for wiping all XP and levels."
